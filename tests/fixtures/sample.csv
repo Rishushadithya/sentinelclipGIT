@@ -1,0 +1,6 @@
+name,email,phone,department,notes
+John Doe,john.doe@example.com,+94771234567,Engineering,"Works on API key management. Key: api_key=sk_test_fake_1234567890abcdef"
+Jane Smith,jane.smith@fakecorp.com,+94772345678,HR,"NIC: 199512345v. Password reset needed."
+Bob Wilson,bob@test.org,+94773456789,IT,"Server IP: 192.168.1.50. Database at 10.0.0.5"
+Alice Brown,alice.brown@example.org,+94774567890,Security,"JWT: eyJhbGciOiJIUzI1NiJ9.eyJ0ZXN0IjoiZmFrZSJ9.fake_signature_here"
+Test User,test@sentinelclip.local,+94775678901,Dev,"AWS Key: AKIAIOSFODNN7FAKEKEY for testing only"

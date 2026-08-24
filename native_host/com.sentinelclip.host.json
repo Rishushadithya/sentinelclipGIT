@@ -1,0 +1,9 @@
+{
+  "name": "com.sentinelclip.host",
+  "description": "SentinelClip Native Messaging Host — bridges browser extension to Flask API hub for file upload scanning.",
+  "path": "d:\\SLIIT\\Y3 S2\\IS project work\\sentinelclip\\native_host\\run_host.bat",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://anakjlaocnfhjoddpaojhieiaofnjamg/"
+  ]
+}

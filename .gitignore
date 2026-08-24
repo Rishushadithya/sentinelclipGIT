@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Database
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Admin token (sensitive)
+config/.admin_token
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.coverage

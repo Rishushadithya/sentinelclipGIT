@@ -1,0 +1,277 @@
+"""
+SentinelClip — Admin Dashboard (Home)
+
+Summary metrics: total events, severity breakdown, source breakdown,
+and recent activity feed.
+
+Run with: streamlit run dashboard/Home.py
+"""
+
+import os
+import sys
+import streamlit as st
+
+# Ensure project root is on path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from dashboard.api_client import SentinelClipAPI
+
+# ---------------------------------------------------------------------------
+# Page config
+# ---------------------------------------------------------------------------
+
+st.set_page_config(
+    page_title="SentinelClip — Dashboard",
+    page_icon="🛡️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ---------------------------------------------------------------------------
+# Custom CSS for premium dark theme
+# ---------------------------------------------------------------------------
+
+st.markdown("""
+<style>
+    /* Import Google Font */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+    /* Global font */
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
+    }
+
+    /* Dark theme overrides */
+    .stApp {
+        background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%);
+    }
+
+    /* Metric cards */
+    div[data-testid="stMetric"] {
+        background: rgba(26, 26, 46, 0.8);
+        border: 1px solid rgba(0, 212, 255, 0.15);
+        border-radius: 12px;
+        padding: 16px 20px;
+        backdrop-filter: blur(10px);
+    }
+
+    div[data-testid="stMetric"] label {
+        color: #8888aa !important;
+        font-size: 13px !important;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    div[data-testid="stMetric"] [data-testid="stMetricValue"] {
+        color: #00d4ff !important;
+        font-weight: 700 !important;
+    }
+
+    /* Sidebar */
+    section[data-testid="stSidebar"] {
+        background: rgba(15, 15, 26, 0.95) !important;
+        border-right: 1px solid rgba(0, 212, 255, 0.1);
+    }
+
+    /* Headers */
+    h1, h2, h3 {
+        color: #e0e0ff !important;
+    }
+
+    /* Status badge */
+    .status-badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    .status-online {
+        background: rgba(0, 255, 136, 0.15);
+        color: #00ff88;
+        border: 1px solid rgba(0, 255, 136, 0.3);
+    }
+
+    .status-offline {
+        background: rgba(255, 69, 96, 0.15);
+        color: #ff4560;
+        border: 1px solid rgba(255, 69, 96, 0.3);
+    }
+
+    /* Recent events table */
+    .event-row {
+        background: rgba(26, 26, 46, 0.5);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin-bottom: 8px;
+    }
+
+    .severity-high { color: #e94560; font-weight: 600; }
+    .severity-medium { color: #f0a500; font-weight: 600; }
+    .severity-low { color: #00d4ff; font-weight: 600; }
+</style>
+""", unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
+# Sidebar — Auth & API status
+# ---------------------------------------------------------------------------
+
+with st.sidebar:
+    st.markdown("## 🛡️ SentinelClip")
+    st.markdown("**Local DLP Dashboard**")
+    st.markdown("---")
+
+    # Admin token input
+    admin_token = st.text_input(
+        "Admin Token",
+        type="password",
+        help="Enter the token from config/.admin_token",
+        key="admin_token",
+    )
+
+    # Store token in session
+    if admin_token:
+        st.session_state["token"] = admin_token
+
+    # Initialize API client
+    token = st.session_state.get("token", "")
+    api = SentinelClipAPI(admin_token=token)
+
+    # API status
+    st.markdown("---")
+    st.markdown("### API Status")
+    try:
+        health = api.health()
+        if health.get("status") == "ok":
+            st.markdown(
+                '<span class="status-badge status-online">● Online</span>',
+                unsafe_allow_html=True,
+            )
+            st.caption(f"v{health.get('version', '?')}")
+        else:
+            st.markdown(
+                '<span class="status-badge status-offline">● Offline</span>',
+                unsafe_allow_html=True,
+            )
+    except Exception:
+        st.markdown(
+            '<span class="status-badge status-offline">● Offline</span>',
+            unsafe_allow_html=True,
+        )
+        st.caption("Start Flask API: `py -m api.app`")
+
+    st.markdown("---")
+    if st.button("🔄 Refresh Data"):
+        st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Main content
+# ---------------------------------------------------------------------------
+
+st.markdown("# 🛡️ SentinelClip Dashboard")
+st.markdown("**Local-First Data Loss Prevention Monitoring**")
+st.markdown("---")
+
+try:
+    stats = api.get_stats()
+
+    # Summary metrics row
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric(
+            label="Total Events",
+            value=stats.get("total_events", 0),
+        )
+
+    with col2:
+        st.metric(
+            label="Events Today",
+            value=stats.get("events_today", 0),
+        )
+
+    with col3:
+        high_count = stats.get("by_severity", {}).get("HIGH", 0)
+        st.metric(
+            label="High Severity",
+            value=high_count,
+        )
+
+    with col4:
+        blocked = stats.get("by_action", {}).get("BLOCK", 0)
+        st.metric(
+            label="Blocked Actions",
+            value=blocked,
+        )
+
+    st.markdown("---")
+
+    # Charts row
+    chart_col1, chart_col2 = st.columns(2)
+
+    with chart_col1:
+        st.markdown("### Severity Breakdown")
+        by_severity = stats.get("by_severity", {})
+        if by_severity:
+            import pandas as pd
+            df_severity = pd.DataFrame(
+                list(by_severity.items()),
+                columns=["Severity", "Count"],
+            )
+            st.bar_chart(df_severity.set_index("Severity"))
+        else:
+            st.info("No events recorded yet.")
+
+    with chart_col2:
+        st.markdown("### Source Breakdown")
+        by_source = stats.get("by_source", {})
+        if by_source:
+            import pandas as pd
+            df_source = pd.DataFrame(
+                list(by_source.items()),
+                columns=["Source", "Count"],
+            )
+            st.bar_chart(df_source.set_index("Source"))
+        else:
+            st.info("No events recorded yet.")
+
+    # Action breakdown
+    st.markdown("### Action Breakdown")
+    by_action = stats.get("by_action", {})
+    if by_action:
+        action_cols = st.columns(len(by_action))
+        for i, (action, count) in enumerate(by_action.items()):
+            with action_cols[i]:
+                st.metric(label=action or "N/A", value=count)
+
+    st.markdown("---")
+
+    # Recent events
+    st.markdown("### Recent Events")
+    recent = stats.get("recent_events", [])
+    if recent:
+        import pandas as pd
+        df_recent = pd.DataFrame(recent)
+        display_cols = [
+            "id", "timestamp", "source", "domain", "rule_name",
+            "severity", "action_taken",
+        ]
+        available_cols = [c for c in display_cols if c in df_recent.columns]
+        st.dataframe(
+            df_recent[available_cols],
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("No events recorded yet. Start monitoring to see activity here.")
+
+except Exception as e:
+    st.error(f"Could not connect to SentinelClip API: {e}")
+    st.info(
+        "Make sure the Flask API hub is running:\n\n"
+        "```\npy -m api.app\n```"
+    )

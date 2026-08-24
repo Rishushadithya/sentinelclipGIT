@@ -1,0 +1,28 @@
+{
+  "application": "SentinelClip Test Data",
+  "note": "ALL VALUES ARE FAKE — for testing detection rules only",
+  "config": {
+    "api_key": "sk_live_FAKE_1234567890abcdefghijklmnop",
+    "aws_access_key": "AKIAIOSFODNN7TESTKEY",
+    "database": {
+      "host": "192.168.1.200",
+      "port": 5432,
+      "password": "fake_db_password_123"
+    },
+    "jwt_secret": "eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJ0ZXN0In0.fake_rsa_signature",
+    "admin_email": "admin@internal-test.example.com"
+  },
+  "users": [
+    {
+      "name": "Test User",
+      "email": "testuser@example.com",
+      "nic": "200012345678",
+      "card": "4111 1111 1111 1111"
+    }
+  ],
+  "servers": [
+    {"name": "db-primary", "ip": "10.0.1.10"},
+    {"name": "db-replica", "ip": "172.16.0.100"},
+    {"name": "public-api", "ip": "203.0.113.50"}
+  ]
+}

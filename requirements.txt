@@ -1,0 +1,7 @@
+flask
+flask-cors
+pyperclip
+streamlit
+requests
+pandas
+pytest

@@ -1,0 +1,74 @@
+[
+  {
+    "rule_name": "AWS Access Key",
+    "pattern": "AKIA[0-9A-Z]{16}",
+    "pattern_type": "regex",
+    "severity": "HIGH",
+    "action": "BLOCK",
+    "replacement_value": null,
+    "enabled": true
+  },
+  {
+    "rule_name": "Generic API Key",
+    "pattern": "(?i)(api[_\\-]?key)[\"'\\s:=]+[A-Za-z0-9_\\-]{16,}",
+    "pattern_type": "regex",
+    "severity": "HIGH",
+    "action": "REDACT",
+    "replacement_value": null,
+    "enabled": true
+  },
+  {
+    "rule_name": "Private IP Address",
+    "pattern": "\\b(10\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}|172\\.(1[6-9]|2\\d|3[0-1])\\.\\d{1,3}\\.\\d{1,3}|192\\.168\\.\\d{1,3}\\.\\d{1,3})\\b",
+    "pattern_type": "regex",
+    "severity": "MEDIUM",
+    "action": "OBFUSCATE",
+    "replacement_value": "[PRIVATE_IP]",
+    "enabled": true
+  },
+  {
+    "rule_name": "Email Address",
+    "pattern": "[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}",
+    "pattern_type": "regex",
+    "severity": "LOW",
+    "action": "WARN",
+    "replacement_value": null,
+    "enabled": true
+  },
+  {
+    "rule_name": "NIC / National ID (LK)",
+    "pattern": "\\b\\d{9}[vVxX]\\b|\\b\\d{12}\\b",
+    "pattern_type": "regex",
+    "severity": "MEDIUM",
+    "action": "REDACT",
+    "replacement_value": null,
+    "enabled": true
+  },
+  {
+    "rule_name": "Credit Card Number",
+    "pattern": "\\b(?:\\d[ \\-]*?){13,16}\\b",
+    "pattern_type": "regex",
+    "severity": "HIGH",
+    "action": "BLOCK",
+    "replacement_value": null,
+    "enabled": true
+  },
+  {
+    "rule_name": "JWT Token",
+    "pattern": "eyJ[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+",
+    "pattern_type": "regex",
+    "severity": "HIGH",
+    "action": "BLOCK",
+    "replacement_value": null,
+    "enabled": true
+  },
+  {
+    "rule_name": "Password Assignment",
+    "pattern": "(?i)(password|passwd|pwd)[\"'\\s:=]+\\S+",
+    "pattern_type": "regex",
+    "severity": "HIGH",
+    "action": "REDACT",
+    "replacement_value": null,
+    "enabled": true
+  }
+]
