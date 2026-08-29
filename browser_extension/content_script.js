@@ -19,16 +19,46 @@
     // -----------------------------------------------------------------------
 
     const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB limit for scanning
-    const SUPPORTED_EXTENSIONS = [
-        '.txt', '.csv', '.json', '.xml', '.yaml', '.yml',
-        '.py', '.js', '.ts', '.jsx', '.tsx',
-        '.java', '.cpp', '.c', '.h', '.hpp',
-        '.cs', '.go', '.rs', '.rb', '.php',
-        '.sql', '.sh', '.bat', '.ps1',
-        '.env', '.cfg', '.ini', '.conf',
-        '.md', '.rst', '.log',
+
+    // AI-readable file categories that should be blocked before upload.
+    const BLOCKABLE_EXTENSIONS = [
+        // Documents and Text
+        '.txt', '.rtf', '.md', '.rst', '.log', '.pdf', '.doc', '.docx', '.odt',
+        // Spreadsheets and Data
+        '.csv', '.tsv', '.xls', '.xlsx', '.ods', '.json', '.xml', '.yaml', '.yml',
+        '.ini', '.cfg', '.conf', '.env', '.properties',
+        // Presentations
+        '.ppt', '.pptx', '.odp',
+        // Code and Scripting Files
+        '.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.cpp', '.c', '.h', '.hpp',
+        '.cs', '.go', '.rs', '.rb', '.php', '.swift', '.kt', '.scala', '.sql',
+        '.sh', '.bash', '.zsh', '.bat', '.ps1', '.cmd', '.pl', '.perl', '.lua',
+        // Images and Media
+        '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg', '.ico',
+        '.mp3', '.wav', '.flac', '.mp4', '.mov', '.avi', '.mkv', '.webm',
     ];
-    const SUPPORTED_MIME_PREFIXES = ['text/', 'application/json', 'application/xml'];
+
+    const BLOCKABLE_MIME_PREFIXES = [
+        'text/',
+        'application/json',
+        'application/xml',
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-powerpoint',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'application/vnd.oasis.opendocument.text',
+        'application/vnd.oasis.opendocument.spreadsheet',
+        'application/vnd.oasis.opendocument.presentation',
+        'image/',
+        'audio/',
+        'video/',
+    ];
+
+    const SUPPORTED_EXTENSIONS = BLOCKABLE_EXTENSIONS;
+    const SUPPORTED_MIME_PREFIXES = BLOCKABLE_MIME_PREFIXES;
 
     // -----------------------------------------------------------------------
     // Utility functions
@@ -43,13 +73,14 @@
             return false;
         }
 
-        // Check by extension
         const ext = '.' + file.name.split('.').pop().toLowerCase();
-        if (SUPPORTED_EXTENSIONS.includes(ext)) {
+        const lowerName = file.name.toLowerCase();
+
+        // Any common AI-readable file type should be considered sensitive and blocked.
+        if (BLOCKABLE_EXTENSIONS.includes(ext) || lowerName.endsWith('.pdf')) {
             return true;
         }
 
-        // Check by MIME type
         if (file.type) {
             for (const prefix of SUPPORTED_MIME_PREFIXES) {
                 if (file.type.startsWith(prefix)) {
@@ -59,6 +90,23 @@
         }
 
         console.log(`[SentinelClip] Skipping ${file.name}: unsupported type (${file.type || 'unknown'})`);
+        return false;
+    }
+
+    function isBlockedAiReadableFile(file) {
+        const ext = '.' + file.name.split('.').pop().toLowerCase();
+        if (BLOCKABLE_EXTENSIONS.includes(ext)) {
+            return true;
+        }
+
+        if (file.type) {
+            for (const prefix of BLOCKABLE_MIME_PREFIXES) {
+                if (file.type.startsWith(prefix)) {
+                    return true;
+                }
+            }
+        }
+
         return false;
     }
 
@@ -230,6 +278,15 @@
     async function scanFile(file) {
         if (!isScannable(file)) {
             return { verdict: 'ALLOW', reason: 'unscannable_file_type' };
+        }
+
+        // Block common AI-readable files immediately before any upload is allowed.
+        if (isBlockedAiReadableFile(file)) {
+            return {
+                verdict: 'BLOCK',
+                reason: 'blocked_ai_readable_file_type',
+                detections: 'AI-readable file category: ' + (file.type || file.name),
+            };
         }
 
         try {

@@ -32,6 +32,14 @@ st.markdown("""
 # Initialize
 # ---------------------------------------------------------------------------
 
+
+def _rule_key(rule_id, fallback_index):
+    """Return a unique Streamlit key for a rule row even when the API omits an ID."""
+    if rule_id is None or str(rule_id).strip() in ("", "?"):
+        return f"rule_{fallback_index}"
+    return f"rule_{rule_id}"
+
+
 token = st.session_state.get("token", "")
 api = SentinelClipAPI(admin_token=token)
 
@@ -119,8 +127,9 @@ try:
     if not rules:
         st.info("No policy rules configured.")
     else:
-        for rule in rules:
-            rule_id = rule.get("id", "?")
+        for index, rule in enumerate(rules):
+            rule_id = rule.get("id")
+            rule_key = _rule_key(rule_id, index)
             enabled = rule.get("enabled", True)
             severity = rule.get("severity", "?")
 
@@ -139,26 +148,26 @@ try:
                 f"{severity_icon} {rule.get('rule_name', 'Unnamed')} — "
                 f"{rule.get('action', '?')} | {status} {'Enabled' if enabled else 'Disabled'}"
             ):
-                with st.form(f"edit_rule_{rule_id}"):
+                with st.form(f"edit_rule_{rule_key}"):
                     edit_col1, edit_col2 = st.columns(2)
 
                     with edit_col1:
                         edit_name = st.text_input(
                             "Rule Name",
                             value=rule.get("rule_name", ""),
-                            key=f"name_{rule_id}",
+                            key=f"name_{rule_key}",
                         )
                         edit_pattern = st.text_area(
                             "Pattern",
                             value=rule.get("pattern", ""),
                             height=80,
-                            key=f"pattern_{rule_id}",
+                            key=f"pattern_{rule_key}",
                         )
                         edit_type = st.selectbox(
                             "Pattern Type",
                             options=["regex", "keyword"],
                             index=0 if rule.get("pattern_type") == "regex" else 1,
-                            key=f"type_{rule_id}",
+                            key=f"type_{rule_key}",
                         )
 
                     with edit_col2:
@@ -168,7 +177,7 @@ try:
                             options=severity_options,
                             index=severity_options.index(severity)
                             if severity in severity_options else 0,
-                            key=f"severity_{rule_id}",
+                            key=f"severity_{rule_key}",
                         )
                         action_options = ["WARN", "OBFUSCATE", "REDACT", "BLOCK"]
                         current_action = rule.get("action", "WARN")
@@ -177,17 +186,17 @@ try:
                             options=action_options,
                             index=action_options.index(current_action)
                             if current_action in action_options else 0,
-                            key=f"action_{rule_id}",
+                            key=f"action_{rule_key}",
                         )
                         edit_replacement = st.text_input(
                             "Replacement Value",
                             value=rule.get("replacement_value", "") or "",
-                            key=f"replacement_{rule_id}",
+                            key=f"replacement_{rule_key}",
                         )
                         edit_enabled = st.checkbox(
                             "Enabled",
                             value=enabled,
-                            key=f"enabled_{rule_id}",
+                            key=f"enabled_{rule_key}",
                         )
 
                     btn_col1, btn_col2, _ = st.columns([1, 1, 4])

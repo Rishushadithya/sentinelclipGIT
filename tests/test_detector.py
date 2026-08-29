@@ -110,6 +110,11 @@ class TestPrivateIP:
         dets = scan_with_seeds(text)
         assert "Private IP Address" not in rule_names(dets)
 
+    def test_positive_public_ip(self):
+        text = "Public endpoint: 8.8.8.8"
+        dets = scan_with_seeds(text)
+        assert "Public IP Address" in rule_names(dets)
+
     def test_negative_172_public(self):
         # 172.32.x.x is NOT private
         text = "Address: 172.32.0.1"
@@ -214,6 +219,30 @@ class TestPassword:
 
     def test_positive_pwd(self):
         dets = scan_with_seeds("pwd='test_only_pwd_456'")
+        assert "Password Assignment" in rule_names(dets)
+
+    def test_positive_pass_alias(self):
+        dets = scan_with_seeds("pass=my_packet_secret")
+        assert "Password Assignment" in rule_names(dets)
+
+    def test_positive_pw_alias(self):
+        dets = scan_with_seeds('"pw":"raw_payload_pwd_2026"')
+        assert "Password Assignment" in rule_names(dets)
+
+    def test_positive_password_tag(self):
+        dets = scan_with_seeds("<password>raw_tag_secret</password>")
+        assert "Password Assignment" in rule_names(dets)
+
+    def test_positive_passcode(self):
+        dets = scan_with_seeds("passcode: 438912")
+        assert "Password Assignment" in rule_names(dets)
+
+    def test_positive_passphrase(self):
+        dets = scan_with_seeds('passphrase="correct horse battery staple"')
+        assert "Password Assignment" in rule_names(dets)
+
+    def test_positive_db_password_tag(self):
+        dets = scan_with_seeds("<db_password>mysql_root_secret</db_password>")
         assert "Password Assignment" in rule_names(dets)
 
     def test_negative_just_word(self):

@@ -40,6 +40,7 @@ def _record_test_event(conn, rule_name="Test Rule", severity="HIGH", source="cli
         timestamp="2026-08-19T10:00:00Z",
         source=source,
         domain=None,
+        pc_user_name=None,
         rule_name=rule_name,
         severity=severity,
         action_taken="BLOCK",

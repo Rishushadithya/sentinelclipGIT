@@ -88,6 +88,19 @@ SEED_RULES: list[PolicyRule] = [
         replacement_value="[PRIVATE_IP]",
     ),
     PolicyRule(
+        rule_name="Public IP Address",
+        pattern=(
+            r"\b(?:"
+            r"(?!(?:10|127|169\.254|192\.168|172\.(?:1[6-9]|2\d|3[0-1]))(?:\.\d{1,3}){2})"
+            r"(?:\d{1,3}\.){3}\d{1,3}"
+            r")\b"
+        ),
+        pattern_type="regex",
+        severity="LOW",
+        action="WARN",
+        replacement_value="[PUBLIC_IP]",
+    ),
+    PolicyRule(
         rule_name="Email Address",
         pattern=r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}",
         pattern_type="regex",
@@ -117,7 +130,12 @@ SEED_RULES: list[PolicyRule] = [
     ),
     PolicyRule(
         rule_name="Password Assignment",
-        pattern=r'(?i)(password|passwd|pwd)["\'\s:=]+\S+',
+        pattern=(
+            r'(?i)(?:'
+            r'\b(?:password|passwd|pwd|pass|pw|passcode|passphrase|userpass|loginpass|dbpass|db_password|authpass)\b\s*["\']?\s*(?:[:=])\s*["\']?\S+'
+            r'|<\s*(?:password|passwd|pwd|pass|pw|passcode|passphrase|userpass|loginpass|dbpass|db_password|authpass)\s*>\s*[^<\r\n]+\s*<\s*/\s*(?:password|passwd|pwd|pass|pw|passcode|passphrase|userpass|loginpass|dbpass|db_password|authpass)\s*>'
+            r')'
+        ),
         pattern_type="regex",
         severity="HIGH",
         action="REDACT",

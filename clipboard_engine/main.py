@@ -19,6 +19,7 @@ import sys
 import os
 import time
 import logging
+import re
 import pyperclip
 
 # Fix Windows console encoding
@@ -35,6 +36,7 @@ from clipboard_engine.watcher import ClipboardWatcher
 from clipboard_engine.detector import PolicyCache, detect_sensitive_content
 from clipboard_engine.sanitizer import sanitize_payload
 from clipboard_engine.reporter import report_detection, check_api_health
+from clipboard_engine.notifier import show_warning_notification
 
 # ---------------------------------------------------------------------------
 # Logging setup
@@ -46,6 +48,10 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("sentinelclip.engine")
+
+EMAIL_PATTERN = re.compile(r"[a-zA-Z0-9._%+\-]+@([a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})")
+DEFAULT_COMPANY_DOMAIN_HINTS = ("company", "corp", "enterprise", "internal")
+COMPANY_EMAIL_DOMAIN_ENV = "SENTINELCLIP_COMPANY_DOMAINS"
 
 # ANSI colors for console output
 COLORS = {
@@ -80,6 +86,33 @@ class SentinelClipEngine:
         self.policy_cache = PolicyCache(api_base=api_base)
         self.event_count = 0
         self.block_count = 0
+        self.company_domains = self._load_company_domains()
+
+    def _load_company_domains(self) -> set[str]:
+        """
+        Load comma-separated company domains from SENTINELCLIP_COMPANY_DOMAINS.
+        Example: SENTINELCLIP_COMPANY_DOMAINS=acme.com,internal.acme.com
+        """
+        raw = os.getenv(COMPANY_EMAIL_DOMAIN_ENV, "")
+        return {d.strip().lower() for d in raw.split(",") if d.strip()}
+
+    def _find_company_email_domains(self, text: str) -> set[str]:
+        """Return matched company-related email domains in clipboard text."""
+        matches = EMAIL_PATTERN.findall(text)
+        matched_domains: set[str] = set()
+
+        for domain in matches:
+            normalized = domain.lower()
+            if any(hint in normalized for hint in DEFAULT_COMPANY_DOMAIN_HINTS):
+                matched_domains.add(normalized)
+                continue
+
+            for configured in self.company_domains:
+                if normalized == configured or normalized.endswith(f".{configured}"):
+                    matched_domains.add(normalized)
+                    break
+
+        return matched_domains
 
     def handle_clipboard_change(self, text: str):
         """
@@ -98,6 +131,17 @@ class SentinelClipEngine:
 
         # Filter out meta entries to get actual rule detections
         rule_detections = [d for d in detections_log if "rule_name" in d]
+
+        company_email_domains = self._find_company_email_domains(text)
+        if company_email_domains:
+            rule_detections.append({
+                "rule_name": "Company Email Address",
+                "severity": "LOW",
+                "action": "WARN",
+                "classification": "company_email",
+                "domain_count": len(company_email_domains),
+            })
+            detections_log.insert(0, {"type": "warning_required"})
 
         if not rule_detections:
             return  # No sensitive content found
@@ -143,6 +187,18 @@ class SentinelClipEngine:
                     max_severity,
                 )
             )
+
+            if company_email_domains:
+                domains_preview = ", ".join(sorted(company_email_domains)[:2])
+                if len(company_email_domains) > 2:
+                    domains_preview += ", ..."
+                show_warning_notification(
+                    title="SentinelClip Warning: Company Email Copied",
+                    message=(
+                        "Company email detected in clipboard. Copy is allowed, "
+                        f"but share carefully. Domains: {domains_preview}"
+                    ),
+                )
 
         # Log each detection
         for det in rule_detections:

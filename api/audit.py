@@ -52,6 +52,7 @@ def record_audit_event(
     timestamp: str,
     source: str,
     domain: str | None,
+    pc_user_name: str | None,
     rule_name: str | None,
     severity: str | None,
     action_taken: str | None,
@@ -77,6 +78,7 @@ def record_audit_event(
     event_data = {
         "timestamp": timestamp,
         "source": source,
+        "pc_user_name": pc_user_name,
         "domain": domain,
         "rule_name": rule_name,
         "severity": severity,
@@ -90,14 +92,15 @@ def record_audit_event(
     cursor = conn.cursor()
     cursor.execute(
         """
-        INSERT INTO audit_log (timestamp, source, domain, rule_name, severity,
+        INSERT INTO audit_log (timestamp, source, pc_user_name, domain, rule_name, severity,
                                action_taken, detection_summary,
                                previous_hash, current_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             timestamp,
             source,
+            pc_user_name,
             domain,
             rule_name,
             severity,
@@ -148,6 +151,7 @@ def verify_chain(conn: sqlite3.Connection) -> dict:
         event_data = {
             "timestamp": row["timestamp"],
             "source": row["source"],
+            "pc_user_name": row["pc_user_name"] if "pc_user_name" in row.keys() else None,
             "domain": row["domain"],
             "rule_name": row["rule_name"],
             "severity": row["severity"],

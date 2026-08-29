@@ -59,6 +59,7 @@ class AuditEventModel:
     id: Optional[int] = None
     timestamp: str = ""
     source: str = ""                   # 'clipboard' | 'browser_upload'
+    pc_user_name: Optional[str] = None
     domain: Optional[str] = None
     rule_name: Optional[str] = None
     severity: Optional[str] = None
@@ -72,6 +73,7 @@ class AuditEventModel:
             "id": self.id,
             "timestamp": self.timestamp,
             "source": self.source,
+            "pc_user_name": self.pc_user_name,
             "domain": self.domain,
             "rule_name": self.rule_name,
             "severity": self.severity,
@@ -87,6 +89,7 @@ class AuditEventModel:
             id=row["id"],
             timestamp=row["timestamp"],
             source=row["source"],
+            pc_user_name=row["pc_user_name"] if "pc_user_name" in row.keys() else None,
             domain=row["domain"],
             rule_name=row["rule_name"],
             severity=row["severity"],

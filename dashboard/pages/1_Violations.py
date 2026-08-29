@@ -101,7 +101,7 @@ try:
 
         # Format display
         display_cols = [
-            "id", "timestamp", "source", "domain", "rule_name",
+            "id", "timestamp", "source", "pc_user_name", "domain", "rule_name",
             "severity", "action_taken", "detection_summary",
         ]
         available_cols = [c for c in display_cols if c in df.columns]

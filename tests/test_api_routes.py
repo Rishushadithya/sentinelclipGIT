@@ -197,6 +197,7 @@ class TestLogRoutes:
             "/api/v1/log",
             json={
                 "source": "clipboard",
+                "pc_user_name": "DESKTOP-USER",
                 "detections": [
                     {
                         "rule_name": "AWS Access Key",
@@ -212,6 +213,10 @@ class TestLogRoutes:
         assert data["status"] == "logged"
         assert "event_id" in data
         assert "current_hash" in data
+
+        events_response = client.get("/api/v1/events")
+        event = events_response.get_json()["events"][0]
+        assert event["pc_user_name"] == "DESKTOP-USER"
 
     def test_log_browser_upload(self, client):
         response = client.post(

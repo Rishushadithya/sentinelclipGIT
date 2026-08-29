@@ -54,6 +54,12 @@ def sanitize_payload(
                 "match_end": match.end(),
                 "matched_len": match.end() - match.start(),
             }
+
+            if rule.rule_name == "Public IP Address":
+                detection_entry["classification"] = "public_ip"
+            elif rule.rule_name == "Private IP Address":
+                detection_entry["classification"] = "private_ip"
+
             detections_log.append(detection_entry)
 
             if rule.action == "REDACT":

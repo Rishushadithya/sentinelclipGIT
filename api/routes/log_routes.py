@@ -5,6 +5,7 @@ POST /api/v1/log — Record a detection event with hash chain.
 """
 
 import json
+import getpass
 from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request, g
 from api.audit import record_audit_event
@@ -45,6 +46,7 @@ def log_event():
 
     # Use provided timestamp or generate one
     timestamp = data.get("timestamp") or datetime.now(timezone.utc).isoformat()
+    pc_user_name = data.get("pc_user_name") or getpass.getuser()
 
     # Extract detection info
     detections = data.get("detections", [])
@@ -76,6 +78,7 @@ def log_event():
         timestamp=timestamp,
         source=data["source"],
         domain=data.get("domain"),
+        pc_user_name=pc_user_name,
         rule_name=primary_rule_name,
         severity=primary_severity,
         action_taken=action_taken,

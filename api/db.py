@@ -61,6 +61,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT NOT NULL,
             source TEXT NOT NULL,
+            pc_user_name TEXT,
             domain TEXT,
             rule_name TEXT,
             severity TEXT,
@@ -70,6 +71,8 @@ def init_db(conn: sqlite3.Connection) -> None:
             current_hash TEXT NOT NULL
         )
     """)
+
+    _ensure_audit_log_columns(conn)
 
     # Create allowed/blocked domains table
     cursor.execute("""
@@ -86,6 +89,49 @@ def init_db(conn: sqlite3.Connection) -> None:
     count = cursor.execute("SELECT COUNT(*) FROM policies").fetchone()[0]
     if count == 0:
         _seed_default_policies(conn)
+
+    _migrate_default_policy_patterns(conn)
+
+
+def _ensure_audit_log_columns(conn: sqlite3.Connection) -> None:
+    """Add the pc_user_name column to existing audit_log tables."""
+    columns = conn.execute("PRAGMA table_info(audit_log)").fetchall()
+    existing = {row[1] for row in columns}
+
+    if "pc_user_name" not in existing:
+        conn.execute("ALTER TABLE audit_log ADD COLUMN pc_user_name TEXT")
+        conn.commit()
+
+
+def _migrate_default_policy_patterns(conn: sqlite3.Connection) -> None:
+    """Migrate specific legacy seed patterns without overwriting custom rules."""
+    legacy_password_pattern = r'(?i)(password|passwd|pwd)["\'\s:=]+\S+'
+    prior_expanded_password_pattern = (
+        r'(?i)(?:\b(?:password|passwd|pwd|pass|pw)\b\s*["\']?\s*(?:[:=])\s*["\']?\S+'
+        r'|<\s*(?:password|passwd|pwd|pass|pw)\s*>\s*[^<\r\n]+\s*<\s*/\s*(?:password|passwd|pwd|pass|pw)\s*>)'
+    )
+    expanded_password_pattern = (
+        r'(?i)(?:\b(?:password|passwd|pwd|pass|pw|passcode|passphrase|userpass|loginpass|dbpass|db_password|authpass)\b\s*["\']?\s*(?:[:=])\s*["\']?\S+'
+        r'|<\s*(?:password|passwd|pwd|pass|pw|passcode|passphrase|userpass|loginpass|dbpass|db_password|authpass)\s*>\s*[^<\r\n]+\s*<\s*/\s*(?:password|passwd|pwd|pass|pw|passcode|passphrase|userpass|loginpass|dbpass|db_password|authpass)\s*>)'
+    )
+
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE policies
+        SET pattern = ?, updated_at = ?
+        WHERE rule_name = ? AND (pattern = ? OR pattern = ?)
+        """,
+        (
+            expanded_password_pattern,
+            datetime.now(timezone.utc).isoformat(),
+            "Password Assignment",
+            legacy_password_pattern,
+            prior_expanded_password_pattern,
+        ),
+    )
+    if cursor.rowcount > 0:
+        conn.commit()
 
 
 def _seed_default_policies(conn: sqlite3.Connection) -> None:

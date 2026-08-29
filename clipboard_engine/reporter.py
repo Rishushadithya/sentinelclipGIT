@@ -7,6 +7,7 @@ is unreachable.
 """
 
 import logging
+import getpass
 import requests
 from datetime import datetime, timezone
 
@@ -21,6 +22,7 @@ def report_detection(
     domain: str | None = None,
     action_taken: str = "NONE",
     api_base: str = API_BASE,
+    pc_user_name: str | None = None,
 ) -> bool:
     """
     Report a detection event to the Flask API.
@@ -38,6 +40,7 @@ def report_detection(
     payload = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "source": source,
+        "pc_user_name": pc_user_name or getpass.getuser(),
         "domain": domain,
         "detections": detections,
         "action_taken": action_taken,
