@@ -140,25 +140,36 @@ SEED_RULES: list[PolicyRule] = [
         severity="HIGH",
         action="REDACT",
     ),
+    PolicyRule(
+        rule_name="RSA Private Key",
+        pattern=r"-----BEGIN (?:[A-Z0-9_\-]+ )?PRIVATE KEY-----",
+        pattern_type="regex",
+        severity="HIGH",
+        action="BLOCK",
+    ),
+    PolicyRule(
+        rule_name="Database Connection URI",
+        pattern=r"(?i)\b(?:postgres(?:ql)?|mongodb(?:\+srv)?|mysql|redis)://[^\s\"']+",
+        pattern_type="regex",
+        severity="HIGH",
+        action="REDACT",
+    ),
+    PolicyRule(
+        rule_name="GCP API Key",
+        pattern=r"AIza[0-9A-Za-z_\-]{35}",
+        pattern_type="regex",
+        severity="HIGH",
+        action="BLOCK",
+    ),
 ]
 
 
-def scan(text: str, rules: list[PolicyRule]) -> list[Detection]:
+def scan(text: str, rules: list[PolicyRule] = None) -> list[Detection]:
     """
     Scan the input text against all enabled policy rules.
-    
-    Returns a list of Detection objects containing metadata about each match.
-    Does NOT return the raw matched string — only rule name, severity, action,
-    position, and length. This is critical for privacy: the Detection objects
-    are safe for logging.
-    
-    Args:
-        text: The text content to scan.
-        rules: List of PolicyRule objects to check against.
-        
-    Returns:
-        List of Detection objects, one per match found.
     """
+    if rules is None:
+        rules = SEED_RULES
     detections: list[Detection] = []
 
     for rule in rules:
@@ -177,6 +188,50 @@ def scan(text: str, rules: list[PolicyRule]) -> list[Detection]:
             ))
 
     return detections
+
+
+def sanitize_payload(input_text: str, policy_rules: list[PolicyRule] = None) -> tuple[str, list[dict]]:
+    """
+    Appendix B.1 Implementation Pseudocode Function.
+    
+    Sanitizes input text by applying REDACT, OBFUSCATE, WARN, or BLOCK actions
+    based on configured policy rules.
+    
+    Returns:
+        tuple (sanitized_text, list_of_detections)
+    """
+    if policy_rules is None:
+        policy_rules = SEED_RULES
+        
+    sanitized_text = input_text
+    detections_list = []
+
+    for rule in policy_rules:
+        if not rule.enabled:
+            continue
+            
+        compiled = rule.compiled_pattern()
+        matches = list(compiled.finditer(sanitized_text))
+        
+        if matches:
+            action = rule.action
+            if action == "REDACT":
+                sanitized_text = compiled.sub("[REDACTED]", sanitized_text)
+            elif action == "OBFUSCATE":
+                replacement = rule.replacement_value or "[OBFUSCATED]"
+                sanitized_text = compiled.sub(replacement, sanitized_text)
+            elif action == "WARN":
+                detections_list.append({"rule": rule.rule_name, "severity": rule.severity, "action": "WARN"})
+            elif action == "BLOCK":
+                detections_list.append({"rule": rule.rule_name, "severity": rule.severity, "action": "BLOCK"})
+                
+            detections_list.append({
+                "rule_name": rule.rule_name,
+                "severity": rule.severity,
+                "action": action
+            })
+
+    return sanitized_text, detections_list
 
 
 def rules_from_dicts(rule_dicts: list[dict]) -> list[PolicyRule]:

@@ -14,10 +14,12 @@ from flask import Flask, g
 from flask_cors import CORS
 from api.db import get_db, init_db
 from api.auth import get_or_create_admin_token
+from api.admin_credentials import get_or_create_credentials
 from api.routes.policy_routes import policy_bp
 from api.routes.log_routes import log_bp
 from api.routes.event_routes import event_bp
 from api.routes.device_routes import device_bp
+from api.routes.auth_routes import auth_routes_bp
 
 
 def create_app(db_path: str = None) -> Flask:
@@ -46,6 +48,7 @@ def create_app(db_path: str = None) -> Flask:
     app.register_blueprint(log_bp)
     app.register_blueprint(event_bp)
     app.register_blueprint(device_bp)
+    app.register_blueprint(auth_routes_bp)
 
     # Database lifecycle
     @app.before_request
@@ -64,13 +67,16 @@ def create_app(db_path: str = None) -> Flask:
         init_db(conn)
         conn.close()
 
-    # Ensure admin token exists
+    # Ensure admin token and credentials exist
     get_or_create_admin_token()
+    get_or_create_credentials()
 
     return app
 
 
 if __name__ == "__main__":
+    from waitress import serve
+
     app = create_app()
     host = os.getenv("SENTINELCLIP_HOST", "0.0.0.0")
     port = int(os.getenv("SENTINELCLIP_PORT", "5000"))
@@ -79,4 +85,4 @@ if __name__ == "__main__":
     print(f"  Listening on http://{host}:{port}")
     print("  Configure the firewall to restrict this port to the local subnet.")
     print("=" * 60 + "\n")
-    app.run(host=host, port=port, debug=True)
+    serve(app, host=host, port=port)

@@ -425,3 +425,59 @@ class TestFixtureFiles:
         dets = scan_with_seeds(sample_secrets_text)
         names = rule_names(dets)
         assert "Credit Card Number" in names
+
+
+# ===========================================================================
+# Extended Credential Category Tests (Section 4 & 7 Proposal Alignment)
+# ===========================================================================
+
+class TestRSAPrivateKey:
+    def test_positive_standard_rsa(self):
+        text = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0\n-----END RSA PRIVATE KEY-----"
+        dets = scan_with_seeds(text)
+        assert "RSA Private Key" in rule_names(dets)
+
+    def test_positive_generic_private_key(self):
+        text = "Key: -----BEGIN PRIVATE KEY-----"
+        dets = scan_with_seeds(text)
+        assert "RSA Private Key" in rule_names(dets)
+
+    def test_negative_public_key(self):
+        text = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0B\n-----END PUBLIC KEY-----"
+        dets = scan_with_seeds(text)
+        assert "RSA Private Key" not in rule_names(dets)
+
+
+class TestDatabaseConnectionURI:
+    def test_positive_postgres(self):
+        text = "DATABASE_URL=postgresql://admin:secret123@db.internal:5432/production"
+        dets = scan_with_seeds(text)
+        assert "Database Connection URI" in rule_names(dets)
+
+    def test_positive_mongodb(self):
+        text = "mongodb+srv://cluster0.example.mongodb.net/testdb"
+        dets = scan_with_seeds(text)
+        assert "Database Connection URI" in rule_names(dets)
+
+    def test_positive_mysql(self):
+        text = "mysql://root:pass@localhost:3306/app"
+        dets = scan_with_seeds(text)
+        assert "Database Connection URI" in rule_names(dets)
+
+    def test_negative_http_url(self):
+        text = "Visit https://example.com/api/v1/users for documentation."
+        dets = scan_with_seeds(text)
+        assert "Database Connection URI" not in rule_names(dets)
+
+
+class TestGCPAccessKey:
+    def test_positive_gcp_key(self):
+        text = "GOOGLE_API_KEY = AIzaSyA1234567890abcdefghijklmnopqrstuv"
+        dets = scan_with_seeds(text)
+        assert "GCP API Key" in rule_names(dets)
+
+    def test_negative_wrong_prefix(self):
+        text = "AIxaSyA1234567890abcdefghijklmnopqrstuv"
+        dets = scan_with_seeds(text)
+        assert "GCP API Key" not in rule_names(dets)
+

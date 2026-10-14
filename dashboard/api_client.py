@@ -47,6 +47,31 @@ class SentinelClipAPI:
         return self.health().get("status") == "ok"
 
     # -------------------------------------------------------------------
+    # Admin auth
+    # -------------------------------------------------------------------
+
+    def login(self, username: str, password: str) -> dict:
+        """Exchange credentials for the admin bearer token."""
+        resp = requests.post(
+            f"{self.base_url}/admin/login",
+            json={"username": username, "password": password},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def change_credentials(self, new_username: str, new_password: str) -> dict:
+        """Update admin username/password — requires current admin token."""
+        resp = requests.post(
+            f"{self.base_url}/admin/credentials",
+            json={"new_username": new_username, "new_password": new_password},
+            headers=self._headers(auth=True),
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    # -------------------------------------------------------------------
     # Policy
     # -------------------------------------------------------------------
 
@@ -96,6 +121,27 @@ class SentinelClipAPI:
         )
         resp.raise_for_status()
         return resp.json().get("devices", [])
+
+    def get_enrollment_code(self) -> dict:
+        """Get the current active agent enrollment code (or auto-generates if none active)."""
+        resp = requests.get(
+            f"{self.base_url}/devices/enrollment-code",
+            headers=self._headers(auth=True),
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def create_enrollment_code(self, expires_minutes: int = 1440) -> dict:
+        """Manually rotate or create a new agent enrollment code."""
+        resp = requests.post(
+            f"{self.base_url}/devices/enrollment-codes",
+            json={"expires_minutes": expires_minutes},
+            headers=self._headers(auth=True),
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return resp.json()
 
     # -------------------------------------------------------------------
     # Events

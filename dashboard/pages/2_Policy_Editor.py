@@ -12,26 +12,29 @@ import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dashboard.api_client import SentinelClipAPI
+from dashboard.auth import require_login, render_user_sidebar
+from dashboard.styles import (
+    inject_css,
+    render_page_header,
+    severity_badge,
+    status_badge,
+    action_badge,
+)
 
 st.set_page_config(
     page_title="SentinelClip — Policy Editor",
-    page_icon="📋",
     layout="wide",
 )
 
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-    .stApp { background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%); }
-    h1, h2, h3 { color: #e0e0ff !important; }
-</style>
-""", unsafe_allow_html=True)
+require_login()
+inject_css()
 
 # ---------------------------------------------------------------------------
 # Initialize
 # ---------------------------------------------------------------------------
 
+with st.sidebar:
+    render_user_sidebar()
 
 def _rule_key(rule_id, fallback_index):
     """Return a unique Streamlit key for a rule row even when the API omits an ID."""
@@ -56,26 +59,34 @@ group_scope_options = sorted({
     device["group_name"] for device in enrolled_devices if device.get("group_name")
 })
 
-st.markdown("# 📋 Policy Editor")
-st.markdown("Manage detection rules for sensitive content patterns.")
-st.markdown("---")
+render_page_header(
+    title="Policy Rule Definitions",
+    subtitle="Configure real-time regex and keyword inspection rules for endpoint DLP agents.",
+    category="POLICY ENGINE",
+)
+
+# Display persistent flash notification if an action was just completed
+if "policy_flash_message" in st.session_state:
+    flash = st.session_state.pop("policy_flash_message")
+    st.toast(flash["text"])
+    st.success(flash["text"])
 
 if not token:
-    st.warning("⚠️ Enter your admin token in the sidebar on the Home page to edit policies.")
+    st.warning("Admin authorization token is required to modify policy rules.")
 
 # ---------------------------------------------------------------------------
 # Add New Rule
 # ---------------------------------------------------------------------------
 
-with st.expander("➕ Add New Rule", expanded=False):
+with st.expander("+ ADD POLICY RULE", expanded=False):
     with st.form("new_rule_form"):
         col1, col2 = st.columns(2)
 
         with col1:
-            new_name = st.text_input("Rule Name *", placeholder="e.g., GitHub Token")
+            new_name = st.text_input("Rule Name *", placeholder="e.g. AWS Access Key")
             new_pattern = st.text_area(
                 "Pattern *",
-                placeholder="Regex or keyword pattern",
+                placeholder="Regular expression pattern or keyword sequence",
                 height=80,
             )
             new_type = st.selectbox(
@@ -98,7 +109,7 @@ with st.expander("➕ Add New Rule", expanded=False):
             new_scope_type = st.selectbox(
                 "Policy Scope",
                 options=["global", "device", "group"],
-                format_func=lambda value: "All PCs" if value == "global" else value.title(),
+                format_func=lambda value: "All Devices" if value == "global" else value.title(),
             )
             if new_scope_type == "device" and device_scope_options:
                 new_scope_target = st.selectbox(
@@ -111,16 +122,16 @@ with st.expander("➕ Add New Rule", expanded=False):
                 new_scope_target = None
             new_replacement = st.text_input(
                 "Replacement Value",
-                placeholder="Used when action is OBFUSCATE",
+                placeholder="Required when action is set to OBFUSCATE",
             )
 
-        submitted = st.form_submit_button("Create Rule", type="primary")
+        submitted = st.form_submit_button("Deploy Rule", type="primary")
 
         if submitted:
             if not new_name or not new_pattern:
-                st.error("Rule name and pattern are required.")
+                st.error("Rule name and pattern are required fields.")
             elif not token:
-                st.error("Admin token is required. Enter it on the Home page sidebar.")
+                st.error("Admin token is required to deploy rules.")
             else:
                 try:
                     result = api.update_policy({
@@ -134,7 +145,11 @@ with st.expander("➕ Add New Rule", expanded=False):
                         "replacement_value": new_replacement or None,
                         "enabled": True,
                     })
-                    st.success(f"✅ Rule created (ID: {result.get('id')})")
+                    rule_id = result.get("id", "?")
+                    st.session_state["policy_flash_message"] = {
+                        "type": "success",
+                        "text": f"[SUCCESS] Policy rule '{new_name}' deployed successfully. (ID: {rule_id} | Severity: {new_severity} | Action: {new_action})",
+                    }
                     st.rerun()
                 except Exception as e:
                     st.error(f"Failed to create rule: {e}")
@@ -145,7 +160,7 @@ st.markdown("---")
 # Existing Rules
 # ---------------------------------------------------------------------------
 
-st.markdown("### Current Rules")
+st.markdown("### Active Rule Catalog")
 
 try:
     if token:
@@ -154,29 +169,26 @@ try:
         rules = api.get_policies()
 
     if not rules:
-        st.info("No policy rules configured.")
+        st.info("No policy rules configured in local storage.")
     else:
         for index, rule in enumerate(rules):
             rule_id = rule.get("id")
             rule_key = _rule_key(rule_id, index)
             enabled = rule.get("enabled", True)
-            severity = rule.get("severity", "?")
+            severity = rule.get("severity", "LOW")
+            action = rule.get("action", "WARN")
+            rule_name = rule.get("rule_name", "Unnamed Rule")
 
-            # Severity color
-            severity_colors = {
-                "HIGH": "🔴",
-                "MEDIUM": "🟡",
-                "LOW": "🔵",
-            }
-            severity_icon = severity_colors.get(severity, "⚪")
+            status_text = "ACTIVE" if enabled else "DISABLED"
+            expander_title = f"[{severity}]  {rule_name}  //  {action}  —  [{status_text}]"
 
-            # Status indicator
-            status = "✅" if enabled else "❌"
+            with st.expander(expander_title):
+                st.markdown(
+                    f"{severity_badge(severity)} &nbsp; {action_badge(action)} &nbsp; {status_badge(enabled)}",
+                    unsafe_allow_html=True,
+                )
+                st.write("")
 
-            with st.expander(
-                f"{severity_icon} {rule.get('rule_name', 'Unnamed')} — "
-                f"{rule.get('action', '?')} | {status} {'Enabled' if enabled else 'Disabled'}"
-            ):
                 with st.form(f"edit_rule_{rule_key}"):
                     edit_col1, edit_col2 = st.columns(2)
 
@@ -223,7 +235,7 @@ try:
                             key=f"replacement_{rule_key}",
                         )
                         edit_enabled = st.checkbox(
-                            "Enabled",
+                            "Rule Enabled",
                             value=enabled,
                             key=f"enabled_{rule_key}",
                         )
@@ -234,7 +246,7 @@ try:
                             options=scope_type_options,
                             index=scope_type_options.index(current_scope_type)
                             if current_scope_type in scope_type_options else 0,
-                            format_func=lambda value: "All PCs" if value == "global" else value.title(),
+                            format_func=lambda value: "All Devices" if value == "global" else value.title(),
                             key=f"scope_type_{rule_key}",
                         )
                         if edit_scope_type == "device" and device_scope_options:
@@ -257,17 +269,17 @@ try:
                         else:
                             edit_scope_target = None
 
-                    btn_col1, btn_col2, _ = st.columns([1, 1, 4])
+                    btn_col1, btn_col2, _ = st.columns([1.2, 1.2, 3.6])
 
                     with btn_col1:
-                        update_btn = st.form_submit_button("💾 Save", type="primary")
+                        update_btn = st.form_submit_button("Save Changes", type="primary")
 
                     with btn_col2:
-                        delete_btn = st.form_submit_button("🗑️ Delete")
+                        delete_btn = st.form_submit_button("Delete Rule")
 
                     if update_btn:
                         if not token:
-                            st.error("Admin token required.")
+                            st.error("Admin authentication token required.")
                         else:
                             try:
                                 api.update_policy({
@@ -282,22 +294,29 @@ try:
                                     "replacement_value": edit_replacement or None,
                                     "enabled": edit_enabled,
                                 })
-                                st.success("✅ Rule updated")
+                                st.session_state["policy_flash_message"] = {
+                                    "type": "success",
+                                    "text": f"[SUCCESS] Policy rule '{edit_name}' updated successfully. (Action: {edit_action} | {'ACTIVE' if edit_enabled else 'DISABLED'})",
+                                }
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Update failed: {e}")
 
                     if delete_btn:
                         if not token:
-                            st.error("Admin token required.")
+                            st.error("Admin authentication token required.")
                         else:
                             try:
                                 api.delete_policy(rule_id)
-                                st.success("✅ Rule deleted")
+                                rule_title = rule.get('rule_name', 'Rule')
+                                st.session_state["policy_flash_message"] = {
+                                    "type": "success",
+                                    "text": f"[SUCCESS] Policy rule '{rule_title}' deleted successfully.",
+                                }
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Delete failed: {e}")
 
 except Exception as e:
     st.error(f"Could not fetch policies: {e}")
-    st.info("Make sure the Flask API hub is running.")
+    st.info("Ensure the SentinelClip API daemon is running.")

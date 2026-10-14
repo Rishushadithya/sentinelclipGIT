@@ -18,21 +18,32 @@ import struct
 import logging
 import requests
 
-# Ensure project root is on path
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+# Ensure project root is on path, including for the packaged native-host executable.
+if getattr(sys, "frozen", False):
+    SCRIPT_DIR = os.path.dirname(sys.executable)
+    PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+else:
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 sys.path.insert(0, PROJECT_ROOT)
 
-from detection.patterns import scan, rules_from_dicts
+from detection.patterns import scan, rules_from_dicts, SEED_RULES
 from clipboard_engine.sanitizer import sanitize_payload
 from clipboard_engine.device_credentials import get_device_token
+from deployment_config import load_deployment_config
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-API_BASE = os.getenv("SENTINELCLIP_API_BASE", "http://127.0.0.1:5000/api/v1")
-LOG_FILE = os.path.join(SCRIPT_DIR, "native_host.log")
+DEPLOYMENT_CONFIG = os.path.join(PROJECT_ROOT, "config", "deployment.json")
+DEFAULT_POLICY_PATH = os.path.join(PROJECT_ROOT, "config", "default_policy.json")
+API_BASE = os.getenv("SENTINELCLIP_API_BASE") or load_deployment_config(
+    DEPLOYMENT_CONFIG
+)["api_base"]
+LOG_DIR = os.path.join(os.getenv("LOCALAPPDATA", os.path.expanduser("~")), "SentinelClip", "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOG_DIR, "native_host.log")
 
 logging.basicConfig(
     filename=LOG_FILE,
@@ -83,30 +94,47 @@ _cached_rules_raw = None
 
 
 def get_policy_rules():
-    """Fetch policy rules from the Flask API (with simple caching)."""
+    """Fetch policy rules from the Flask API, with fallback to local policy/seeds."""
     global _cached_rules, _cached_rules_raw
 
     try:
         device_token = get_device_token(API_BASE)
-        if not device_token:
-            logger.warning("No enrolled device credentials available")
-            return []
-        resp = requests.get(
-            f"{API_BASE}/policy",
-            headers={"Authorization": f"Bearer {device_token}"},
-            timeout=3,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        rule_dicts = data.get("rules", [])
-        _cached_rules_raw = rule_dicts
-        _cached_rules = rules_from_dicts(rule_dicts)
-        return _cached_rules
+        if device_token:
+            resp = requests.get(
+                f"{API_BASE}/policy",
+                headers={"Authorization": f"Bearer {device_token}"},
+                timeout=3,
+            )
+            if resp.ok:
+                data = resp.json()
+                rule_dicts = data.get("rules", [])
+                if rule_dicts:
+                    _cached_rules_raw = rule_dicts
+                    _cached_rules = rules_from_dicts(rule_dicts)
+                    return _cached_rules
     except requests.RequestException as e:
         logger.warning(f"Could not fetch rules from API: {e}")
-        if _cached_rules:
-            return _cached_rules
-        return []
+
+    if _cached_rules:
+        return _cached_rules
+
+    # Fallback to local default_policy.json if available
+    try:
+        if os.path.exists(DEFAULT_POLICY_PATH):
+            with open(DEFAULT_POLICY_PATH, "r", encoding="utf-8") as f:
+                rule_dicts = json.load(f)
+                if rule_dicts:
+                    _cached_rules = rules_from_dicts(rule_dicts)
+                    return _cached_rules
+    except Exception as e:
+        logger.warning(f"Could not load default_policy.json: {e}")
+
+    # Fallback to built-in SEED_RULES
+    if SEED_RULES:
+        _cached_rules = SEED_RULES
+        return _cached_rules
+
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -122,11 +150,11 @@ def scan_content(domain, filename, content):
     """
     rules = get_policy_rules()
     if not rules:
-        logger.warning("No policy rules available")
+        logger.error("No policy rules available; failing closed for safety.")
         return {
-            "verdict": "ALLOW",
-            "reason": "no_rules",
-            "message": "No policy rules configured.",
+            "verdict": "BLOCK",
+            "reason": "no_rules_fail_closed",
+            "message": "Policy engine unavailable. Upload blocked to protect sensitive data.",
         }
 
     device_token = get_device_token(API_BASE)

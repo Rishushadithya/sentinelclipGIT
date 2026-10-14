@@ -79,5 +79,32 @@
     "action": "REDACT",
     "replacement_value": null,
     "enabled": true
+  },
+  {
+    "rule_name": "RSA Private Key",
+    "pattern": "-----BEGIN (?:[A-Z0-9_\\-]+ )?PRIVATE KEY-----",
+    "pattern_type": "regex",
+    "severity": "HIGH",
+    "action": "BLOCK",
+    "replacement_value": null,
+    "enabled": true
+  },
+  {
+    "rule_name": "Database Connection URI",
+    "pattern": "(?i)\\b(?:postgres(?:ql)?|mongodb(?:\\+srv)?|mysql|redis)://[^\\s\"']+",
+    "pattern_type": "regex",
+    "severity": "HIGH",
+    "action": "REDACT",
+    "replacement_value": null,
+    "enabled": true
+  },
+  {
+    "rule_name": "GCP API Key",
+    "pattern": "AIza[0-9A-Za-z_\\-]{35}",
+    "pattern_type": "regex",
+    "severity": "HIGH",
+    "action": "BLOCK",
+    "replacement_value": null,
+    "enabled": true
   }
 ]

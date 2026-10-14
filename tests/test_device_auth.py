@@ -145,3 +145,51 @@ def test_admin_device_list_handles_authenticated_last_seen(client, admin_headers
     devices = response.get_json()["devices"]
     assert devices[0]["hostname"] == "PC-LIST"
     assert devices[0]["status"] == "online"
+
+
+def test_enrollment_code_changes_when_device_enrolled(client, admin_headers):
+    """Verify that enrolling a device consumes the code and changes it for the next device."""
+    # 1. Fetch current active code
+    get_res = client.get("/api/v1/devices/enrollment-code", headers=admin_headers)
+    assert get_res.status_code == 200
+    first_code = get_res.get_json()["code"]
+    assert first_code
+
+    # 2. Enroll a device with the first code
+    enroll_res = client.post(
+        "/api/v1/devices/enroll",
+        json={
+            "code": first_code,
+            "hostname": "PC-NEW-1",
+            "os_user": "user1",
+        },
+    )
+    assert enroll_res.status_code == 201
+
+    # 3. Old code cannot be reused
+    reused_res = client.post(
+        "/api/v1/devices/enroll",
+        json={
+            "code": first_code,
+            "hostname": "PC-REUSE",
+            "os_user": "user-bad",
+        },
+    )
+    assert reused_res.status_code == 403
+
+    # 4. Active enrollment code must have CHANGED to a fresh new one!
+    get_new_res = client.get("/api/v1/devices/enrollment-code", headers=admin_headers)
+    assert get_new_res.status_code == 200
+    second_code = get_new_res.get_json()["code"]
+    assert second_code != first_code, "Enrollment code should have changed after device enrollment"
+
+    # 5. Next device can enroll using the new changed code
+    enroll_second_res = client.post(
+        "/api/v1/devices/enroll",
+        json={
+            "code": second_code,
+            "hostname": "PC-NEW-2",
+            "os_user": "user2",
+        },
+    )
+    assert enroll_second_res.status_code == 201

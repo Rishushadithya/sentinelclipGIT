@@ -7,6 +7,8 @@ __pycache__/
 dist/
 build/
 *.egg
+installer/.build_venv/
+installer/payload/
 
 # Virtual environment
 .venv/
@@ -21,6 +23,9 @@ ENV/
 
 # Admin token (sensitive)
 config/.admin_token
+config/.device_id
+config/.device_token
+config/deployment.json
 
 # IDE
 .vscode/

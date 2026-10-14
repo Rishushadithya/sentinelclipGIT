@@ -10,75 +10,74 @@ import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dashboard.api_client import SentinelClipAPI
+from dashboard.auth import require_login, render_user_sidebar
+from dashboard.styles import inject_css, render_page_header
 
 st.set_page_config(
     page_title="SentinelClip — Audit Export",
-    page_icon="📊",
     layout="wide",
 )
 
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-    .stApp { background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%); }
-    h1, h2, h3 { color: #e0e0ff !important; }
-</style>
-""", unsafe_allow_html=True)
+require_login()
+inject_css()
 
 # ---------------------------------------------------------------------------
 # Initialize
 # ---------------------------------------------------------------------------
 
+with st.sidebar:
+    render_user_sidebar()
+
 token = st.session_state.get("token", "")
 api = SentinelClipAPI(admin_token=token)
 
-st.markdown("# 📊 Audit Export & Integrity")
-st.markdown("Export audit data and verify chain integrity.")
-st.markdown("---")
+render_page_header(
+    title="Audit Ledger & Export",
+    subtitle="Export audit events and cryptographically verify SHA-256 tamper-evident integrity.",
+    category="COMPLIANCE",
+)
 
 # ---------------------------------------------------------------------------
 # Audit Chain Verification
 # ---------------------------------------------------------------------------
 
-st.markdown("### 🔗 Audit Chain Integrity")
+st.markdown("### Cryptographic Ledger Verification")
 st.markdown(
-    "The audit log uses SHA-256 hash chaining to ensure tamper-evidence. "
-    "Each entry's hash incorporates the previous entry's hash, creating an "
-    "immutable chain. Verification recomputes all hashes and checks for mismatches."
+    "The audit log employs SHA-256 hash chaining to ensure tamper-evidence. "
+    "Each entry incorporates the hash of its preceding record, forming an immutable sequence. "
+    "Verification recomputes all hashes from genesis to head."
 )
 
-col1, col2 = st.columns([1, 3])
+col1, col2 = st.columns([1.5, 3.5])
 
 with col1:
-    verify_btn = st.button("🔍 Verify Integrity", type="primary", use_container_width=True)
+    verify_btn = st.button("Verify Chain Integrity", type="primary", use_container_width=True)
 
 if verify_btn:
-    with st.spinner("Verifying audit chain integrity..."):
+    with st.spinner("Computing SHA-256 hash sequence..."):
         try:
             result = api.verify_audit()
 
             if result.get("valid"):
-                st.success(f"✅ {result.get('message', 'Chain is intact.')}")
+                st.success(f"[INTEGRITY CONFIRMED] {result.get('message', 'Audit chain is intact.')}")
                 st.markdown(
-                    f"**Entries verified:** {result.get('verified_entries', 0)} / "
-                    f"{result.get('total_entries', 0)}"
+                    f"**Entries verified:** `{result.get('verified_entries', 0)} / "
+                    f"{result.get('total_entries', 0)}`"
                 )
             else:
-                st.error(f"🚨 {result.get('message', 'Chain verification failed!')}")
+                st.error(f"[TAMPER DETECTED] {result.get('message', 'Chain verification failed!')}")
                 if result.get("first_mismatch_id"):
                     st.warning(
                         f"First mismatch detected at entry ID: "
                         f"**{result['first_mismatch_id']}**"
                     )
                 st.markdown(
-                    f"**Verified before failure:** "
-                    f"{result.get('verified_entries', 0)} / "
-                    f"{result.get('total_entries', 0)}"
+                    f"**Verified before failure:** `{result.get('verified_entries', 0)} / "
+                    f"{result.get('total_entries', 0)}`"
                 )
 
         except Exception as e:
-            st.error(f"Verification failed: {e}")
+            st.error(f"Verification request failed: {e}")
 
 st.markdown("---")
 
@@ -86,8 +85,8 @@ st.markdown("---")
 # CSV Export
 # ---------------------------------------------------------------------------
 
-st.markdown("### 📥 Export Audit Log")
-st.markdown("Download the full audit log as a CSV file.")
+st.markdown("### Export Audit Log")
+st.markdown("Download full historical telemetry and DLP incident records.")
 
 export_col1, export_col2, export_col3 = st.columns(3)
 
@@ -117,8 +116,8 @@ with export_col3:
         key="export_limit",
     )
 
-if st.button("📥 Generate CSV Export", type="primary"):
-    with st.spinner("Generating export..."):
+if st.button("Generate CSV Export", type="primary"):
+    with st.spinner("Generating dataset export..."):
         try:
             params = {"limit": export_limit}
             if export_severity != "All":
@@ -130,22 +129,22 @@ if st.button("📥 Generate CSV Export", type="primary"):
 
             if csv_data:
                 st.download_button(
-                    label="⬇️ Download CSV",
+                    label="Download CSV",
                     data=csv_data,
                     file_name="sentinelclip_audit_log.csv",
                     mime="text/csv",
                     type="primary",
                 )
-                st.success(f"Export ready — click Download to save.")
+                st.success("Export generated. Click Download CSV to save.")
 
                 # Preview
                 import pandas as pd
                 import io
                 df = pd.read_csv(io.StringIO(csv_data))
-                st.markdown(f"**Preview** ({len(df)} records)")
+                st.markdown(f"**Dataset Preview** (`{len(df)} records`)")
                 st.dataframe(df.head(20), use_container_width=True, hide_index=True)
             else:
-                st.info("No events found matching the selected filters.")
+                st.info("No events found matching the specified parameters.")
 
         except Exception as e:
             st.error(f"Export failed: {e}")
@@ -156,7 +155,7 @@ st.markdown("---")
 # Audit stats summary
 # ---------------------------------------------------------------------------
 
-st.markdown("### 📈 Audit Summary")
+st.markdown("### Audit Ledger Metrics")
 
 try:
     stats = api.get_stats()
@@ -172,7 +171,7 @@ try:
     with stat_col3:
         by_action = stats.get("by_action", {})
         blocked = by_action.get("BLOCK", 0)
-        st.metric("Total Blocked", blocked)
+        st.metric("Blocked Events", blocked)
 
 except Exception as e:
-    st.error(f"Could not fetch stats: {e}")
+    st.error(f"Could not load summary metrics: {e}")

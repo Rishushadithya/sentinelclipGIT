@@ -4,12 +4,16 @@ import getpass
 import json
 import os
 import platform
+import sys
 from pathlib import Path
 
 import requests
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if getattr(sys, "frozen", False):
+    PROJECT_ROOT = Path(sys.executable).resolve().parent.parent
+else:
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_DIR = PROJECT_ROOT / "config"
 DEVICE_ID_FILE = CONFIG_DIR / ".device_id"
 DEVICE_TOKEN_FILE = CONFIG_DIR / ".device_token"

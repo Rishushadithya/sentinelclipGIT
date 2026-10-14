@@ -36,7 +36,7 @@ from clipboard_engine.watcher import ClipboardWatcher
 from clipboard_engine.detector import PolicyCache, detect_sensitive_content
 from clipboard_engine.sanitizer import sanitize_payload
 from clipboard_engine.reporter import report_detection, check_api_health
-from clipboard_engine.notifier import show_warning_notification
+from clipboard_engine.notifier import show_warning_notification, show_dlp_notification
 
 # ---------------------------------------------------------------------------
 # Logging setup
@@ -116,7 +116,7 @@ class SentinelClipEngine:
 
         return matched_domains
 
-    def handle_clipboard_change(self, text: str):
+    def handle_clipboard_change(self, text: str, source_filename: str | None = None):
         """
         Called by the watcher when clipboard content changes.
         Runs the full detection → sanitization → reporting pipeline.
@@ -194,7 +194,6 @@ class SentinelClipEngine:
                 )
             )
 
-
         # Company-email warnings are independent of other sanitization actions.
         # This must also run when the same clipboard text is redacted or blocked.
         if company_email_domains:
@@ -208,6 +207,17 @@ class SentinelClipEngine:
                     f"but share carefully. Domains: {domains_preview}"
                 ),
             )
+
+        # Trigger desktop DLP notification card mentioning the specific violation
+        primary_rule = rule_detections[0]["rule_name"]
+        multi_detail = f"{len(rule_detections)} violations found" if len(rule_detections) > 1 else None
+        show_dlp_notification(
+            rule_name=primary_rule,
+            action=action_taken,
+            source_filename=source_filename,
+            detail=multi_detail,
+            timeout=8,
+        )
 
         # Log each detection
         for det in rule_detections:

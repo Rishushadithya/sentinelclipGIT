@@ -13,6 +13,8 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dashboard.api_client import SentinelClipAPI
+from dashboard.auth import require_login, render_user_sidebar
+from dashboard.styles import inject_css, render_page_header
 
 
 def format_detection_summary(value: str) -> str:
@@ -44,34 +46,32 @@ def format_detection_summary(value: str) -> str:
     summary = ", ".join(visible_labels)
     if len(labels) > len(visible_labels):
         summary += f" +{len(labels) - len(visible_labels)} more"
-    return f"{len(labels)} detection{'s' if len(labels) != 1 else ''} · {summary}"
+    return f"{len(labels)} detection{'s' if len(labels) != 1 else ''} | {summary}"
+
 
 st.set_page_config(
     page_title="SentinelClip — Violations",
-    page_icon="🔍",
     layout="wide",
 )
 
-# Reuse custom CSS from Home
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-    .stApp { background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%); }
-    h1, h2, h3 { color: #e0e0ff !important; }
-</style>
-""", unsafe_allow_html=True)
+require_login()
+inject_css()
 
 # ---------------------------------------------------------------------------
 # Initialize
 # ---------------------------------------------------------------------------
 
+with st.sidebar:
+    render_user_sidebar()
+
 token = st.session_state.get("token", "")
 api = SentinelClipAPI(admin_token=token)
 
-st.markdown("# 🔍 Violations Log")
-st.markdown("Browse and filter all detected security events.")
-st.markdown("---")
+render_page_header(
+    title="Security Incidents & Violations",
+    subtitle="Inspect, search, and triage sensitive data loss prevention detections across endpoints.",
+    category="INCIDENT LOGS",
+)
 
 # ---------------------------------------------------------------------------
 # Filters
@@ -100,8 +100,12 @@ with filter_col4:
     date_to = st.date_input("To Date", value=None)
 
 # Pagination
-page_size = st.selectbox("Results per page", [25, 50, 100, 250], index=1)
-page_num = st.number_input("Page", min_value=1, value=1, step=1)
+page_col1, page_col2 = st.columns(2)
+with page_col1:
+    page_size = st.selectbox("Results per page", [25, 50, 100, 250], index=1)
+with page_col2:
+    page_num = st.number_input("Page", min_value=1, value=1, step=1)
+
 offset = (page_num - 1) * page_size
 
 # ---------------------------------------------------------------------------
@@ -126,13 +130,16 @@ try:
     events = data.get("events", [])
     total = data.get("total", 0)
 
-    st.markdown(f"**{total}** total events matching filters | Showing page {page_num}")
-    st.markdown("---")
+    st.markdown(
+        f'<div style="font-family:\'JetBrains Mono\', monospace; font-size:12px; color:#8b949e; margin-bottom:12px;">'
+        f'MATCHING RECORDS: <strong style="color:#ffffff;">{total}</strong> | CURRENT PAGE: <strong style="color:#ffffff;">{page_num}</strong>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
     if events:
         df = pd.DataFrame(events)
 
-        # Format display
         display_cols = [
             "id", "timestamp", "source", "pc_user_name", "domain", "rule_name",
             "severity", "action_taken", "detection_summary",
@@ -143,15 +150,6 @@ try:
             df["detection_summary"] = df["detection_summary"].apply(
                 format_detection_summary
             )
-
-        # Color-code severity
-        def style_severity(val):
-            colors = {
-                "HIGH": "color: #e94560; font-weight: bold",
-                "MEDIUM": "color: #f0a500; font-weight: bold",
-                "LOW": "color: #00d4ff; font-weight: bold",
-            }
-            return colors.get(val, "")
 
         st.dataframe(
             df[available_cols],
@@ -168,13 +166,12 @@ try:
             },
         )
 
-        # Pagination info
         total_pages = max(1, (total + page_size - 1) // page_size)
         st.caption(f"Page {page_num} of {total_pages}")
 
     else:
-        st.info("No events found matching the selected filters.")
+        st.info("No events found matching the selected filter criteria.")
 
 except Exception as e:
     st.error(f"Could not fetch events: {e}")
-    st.info("Make sure the Flask API hub is running.")
+    st.info("Ensure the SentinelClip API daemon is online.")

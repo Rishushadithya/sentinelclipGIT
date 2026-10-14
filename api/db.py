@@ -76,7 +76,6 @@ def init_db(conn: sqlite3.Connection) -> None:
 
     _ensure_audit_log_columns(conn)
     _ensure_policy_scope_columns(conn)
-
     # Device identity and one-time enrollment state for LAN agents.
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS devices (
@@ -96,6 +95,7 @@ def init_db(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS enrollment_codes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             code_hash TEXT NOT NULL UNIQUE,
+            raw_code TEXT,
             created_at TEXT NOT NULL,
             expires_at TEXT NOT NULL,
             used_at TEXT
@@ -112,6 +112,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     """)
 
     conn.commit()
+    _ensure_enrollment_codes_columns(conn)
 
     # Seed default policies if table is empty
     count = cursor.execute("SELECT COUNT(*) FROM policies").fetchone()[0]
@@ -119,6 +120,7 @@ def init_db(conn: sqlite3.Connection) -> None:
         _seed_default_policies(conn)
 
     _migrate_default_policy_patterns(conn)
+    _ensure_seed_policies(conn)
 
 
 def _ensure_audit_log_columns(conn: sqlite3.Connection) -> None:
@@ -143,6 +145,22 @@ def _ensure_policy_scope_columns(conn: sqlite3.Connection) -> None:
     if "scope_target" not in existing:
         conn.execute("ALTER TABLE policies ADD COLUMN scope_target TEXT")
     conn.commit()
+
+
+def _ensure_enrollment_codes_columns(conn: sqlite3.Connection) -> None:
+    """Add raw_code column to enrollment_codes table if missing."""
+    table_exists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='enrollment_codes'"
+    ).fetchone()
+    if not table_exists:
+        return
+
+    columns = conn.execute("PRAGMA table_info(enrollment_codes)").fetchall()
+    existing = {row[1] for row in columns}
+
+    if "raw_code" not in existing:
+        conn.execute("ALTER TABLE enrollment_codes ADD COLUMN raw_code TEXT")
+        conn.commit()
 
 
 def _migrate_default_policy_patterns(conn: sqlite3.Connection) -> None:
@@ -216,3 +234,48 @@ def _seed_default_policies(conn: sqlite3.Connection) -> None:
 
     conn.commit()
     print(f"[INFO] Seeded {len(rules)} default policy rules.")
+
+
+def _ensure_seed_policies(conn: sqlite3.Connection) -> None:
+    """Ensure any newly added default seed rules are inserted into existing databases."""
+    config_path = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)), "config", "default_policy.json"
+    )
+    if not os.path.exists(config_path):
+        return
+
+    with open(config_path, "r") as f:
+        rules = json.load(f)
+
+    now = datetime.now(timezone.utc).isoformat()
+    cursor = conn.cursor()
+    existing_rules = {row[0] for row in cursor.execute("SELECT rule_name FROM policies").fetchall()}
+
+    added = 0
+    for rule in rules:
+        if rule["rule_name"] not in existing_rules:
+            cursor.execute(
+                """
+                INSERT INTO policies (rule_name, pattern, pattern_type, severity,
+                                      action, replacement_value, enabled,
+                                      scope_type, scope_target,
+                                      created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'global', NULL, ?, ?)
+                """,
+                (
+                    rule["rule_name"],
+                    rule["pattern"],
+                    rule["pattern_type"],
+                    rule["severity"],
+                    rule["action"],
+                    rule.get("replacement_value"),
+                    1 if rule.get("enabled", True) else 0,
+                    now,
+                    now,
+                ),
+            )
+            added += 1
+
+    if added > 0:
+        conn.commit()
+        print(f"[INFO] Inserted {added} missing seed policy rules into database.")

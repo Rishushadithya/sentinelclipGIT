@@ -11,6 +11,10 @@ SentinelClip is a lightweight, real-time Data Loss Prevention (DLP) engine desig
 - 📑 **[Software Stack & Progress Submission Report](file:///d:/SLIIT/Y3%20S2/IS%20project%20work/sentinelclipGIT/SOFTWARE_STACK_PROGRESS_SUBMISSION.md)** — Complete software stack breakdown, architectural details, security mechanisms, progress matrix, and test verification metrics.
 - 📐 **[Architecture Overview](file:///d:/SLIIT/Y3%20S2/IS%20project%20work/sentinelclipGIT/docs/architecture.md)** — Component details and API specifications.
 
+## Windows User Guide
+
+See [docs/user-guide.md](docs/user-guide.md) for installation, LAN enrollment, browser setup, and a safe end-to-end test example.
+
 ---
 
 ## 🛠️ Quick Start

@@ -1,141 +1,132 @@
 /**
- * SentinelClip — Content Script
+ * SentinelClip — Content Script (Isolated World)
  * 
  * Runs on matched AI domain pages (ChatGPT, Gemini, Claude, Copilot).
- * Detects file upload attempts via:
- *   1. <input type="file"> change events
- *   2. Drag-and-drop upload zones
- *   3. Paste events with file data
+ * Coordinates with page_interceptor.js in the main world and forwards
+ * file scanning requests to background.js and the native messaging host.
  * 
- * Reads file content (for supported text-based types) and sends it to
- * background.js for scanning via the native messaging host.
+ * Features:
+ *   1. Bridge between page context and background service worker.
+ *   2. Fail-closed scan execution (never fails open on communication errors).
+ *   3. High-contrast UI overlay for blocked uploads.
+ *   4. Defense-in-depth local DOM event monitoring.
  */
 
 (function() {
     'use strict';
 
-    // -----------------------------------------------------------------------
-    // Configuration
-    // -----------------------------------------------------------------------
-
     const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB limit for scanning
 
-    // AI-readable file categories that should be blocked before upload.
-    const BLOCKABLE_EXTENSIONS = [
-        // Documents and Text
-        '.txt', '.rtf', '.md', '.rst', '.log', '.pdf', '.doc', '.docx', '.odt',
-        // Spreadsheets and Data
-        '.csv', '.tsv', '.xls', '.xlsx', '.ods', '.json', '.xml', '.yaml', '.yml',
-        '.ini', '.cfg', '.conf', '.env', '.properties',
-        // Presentations
-        '.ppt', '.pptx', '.odp',
-        // Code and Scripting Files
-        '.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.cpp', '.c', '.h', '.hpp',
-        '.cs', '.go', '.rs', '.rb', '.php', '.swift', '.kt', '.scala', '.sql',
-        '.sh', '.bash', '.zsh', '.bat', '.ps1', '.cmd', '.pl', '.perl', '.lua',
-        // Images and Media
-        '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg', '.ico',
-        '.mp3', '.wav', '.flac', '.mp4', '.mov', '.avi', '.mkv', '.webm',
-    ];
+    // -----------------------------------------------------------------------
+    // Inject Main-World Page Interceptor
+    // -----------------------------------------------------------------------
 
-    const BLOCKABLE_MIME_PREFIXES = [
-        'text/',
-        'application/json',
-        'application/xml',
-        'application/pdf',
-        'application/msword',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'application/vnd.ms-excel',
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'application/vnd.ms-powerpoint',
-        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-        'application/vnd.oasis.opendocument.text',
-        'application/vnd.oasis.opendocument.spreadsheet',
-        'application/vnd.oasis.opendocument.presentation',
-        'image/',
-        'audio/',
-        'video/',
-    ];
+    function injectPageInterceptor() {
+        try {
+            const script = document.createElement('script');
+            script.src = chrome.runtime.getURL('page_interceptor.js');
+            script.onload = function() {
+                this.remove();
+            };
+            (document.head || document.documentElement).appendChild(script);
+        } catch (err) {
+            console.error('[SentinelClip] Failed to inject page_interceptor.js:', err);
+        }
+    }
 
-    const SUPPORTED_EXTENSIONS = BLOCKABLE_EXTENSIONS;
-    const SUPPORTED_MIME_PREFIXES = BLOCKABLE_MIME_PREFIXES;
-    const replayingInputs = new WeakSet();
-    const replayingDrops = new WeakSet();
+    injectPageInterceptor();
 
     // -----------------------------------------------------------------------
-    // Utility functions
+    // File Reading & Scanning
     // -----------------------------------------------------------------------
 
     /**
-     * Check if a file is text-based and should be scanned.
-     */
-    function isScannable(file) {
-        if (file.size > MAX_FILE_SIZE) {
-            console.log(`[SentinelClip] Skipping ${file.name}: exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit`);
-            return false;
-        }
-
-        const ext = '.' + file.name.split('.').pop().toLowerCase();
-        const lowerName = file.name.toLowerCase();
-
-        // Any common AI-readable file type should be considered sensitive and blocked.
-        if (BLOCKABLE_EXTENSIONS.includes(ext) || lowerName.endsWith('.pdf')) {
-            return true;
-        }
-
-        if (file.type) {
-            for (const prefix of SUPPORTED_MIME_PREFIXES) {
-                if (file.type.startsWith(prefix)) {
-                    return true;
-                }
-            }
-        }
-
-        console.log(`[SentinelClip] Skipping ${file.name}: unsupported type (${file.type || 'unknown'})`);
-        return false;
-    }
-
-    function isBlockedAiReadableFile(file) {
-        const ext = '.' + file.name.split('.').pop().toLowerCase();
-        if (BLOCKABLE_EXTENSIONS.includes(ext)) {
-            return true;
-        }
-
-        if (file.type) {
-            for (const prefix of BLOCKABLE_MIME_PREFIXES) {
-                if (file.type.startsWith(prefix)) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * Read file content as text.
+     * Read file content as text safely.
      */
     function readFileAsText(file) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
-            reader.onload = () => resolve(reader.result);
+            reader.onload = () => resolve(reader.result || '');
             reader.onerror = () => reject(reader.error);
             reader.readAsText(file);
         });
     }
 
     /**
-     * Get the current AI domain.
+     * Scan a file via background.js and native messaging host.
      */
-    function getCurrentDomain() {
-        return window.location.hostname;
+    async function scanFile(file, domain) {
+        if (!file) {
+            return { verdict: 'ALLOW', reason: 'empty_file' };
+        }
+
+        if (file.size > MAX_FILE_SIZE) {
+            return {
+                verdict: 'BLOCK',
+                reason: 'file_too_large',
+                message: `Upload blocked: "${file.name}" exceeds the ${MAX_FILE_SIZE / (1024 * 1024)}MB scan limit.`
+            };
+        }
+
+        let content = '';
+        try {
+            content = await readFileAsText(file);
+        } catch (readErr) {
+            console.error(`[SentinelClip] Error reading ${file.name}:`, readErr);
+            // Fail-closed for security
+            return {
+                verdict: 'BLOCK',
+                reason: 'read_error',
+                message: `SentinelClip could not inspect "${file.name}". Upload blocked for security.`
+            };
+        }
+
+        return new Promise((resolve) => {
+            chrome.runtime.sendMessage(
+                {
+                    type: 'SCAN_FILE',
+                    payload: {
+                        domain: domain || window.location.hostname,
+                        filename: file.name,
+                        content: content,
+                        fileSize: file.size,
+                    }
+                },
+                (response) => {
+                    if (chrome.runtime.lastError) {
+                        console.error('[SentinelClip] Native host communication error:', chrome.runtime.lastError);
+                        // Security policy: fail-closed when communication fails
+                        resolve({
+                            verdict: 'BLOCK',
+                            reason: 'native_host_error',
+                            message: `SentinelClip protection service error. Upload of "${file.name}" blocked to prevent data leak.`
+                        });
+                    } else if (response) {
+                        resolve(response);
+                    } else {
+                        resolve({
+                            verdict: 'BLOCK',
+                            reason: 'no_response',
+                            message: `SentinelClip received no response from scanner. Upload of "${file.name}" blocked.`
+                        });
+                    }
+                }
+            );
+        });
     }
 
-    /**
-     * Create a blocking overlay to prevent upload while scanning.
-     */
+    // -----------------------------------------------------------------------
+    // UI Notifications (Overlay & Banner)
+    // -----------------------------------------------------------------------
+
+    function removeBlockOverlay() {
+        const existing = document.getElementById('sentinelclip-overlay');
+        if (existing) {
+            existing.remove();
+        }
+    }
+
     function showBlockOverlay(message) {
-        // Remove existing overlay if any
         removeBlockOverlay();
 
         const overlay = document.createElement('div');
@@ -144,295 +135,161 @@
             position: fixed;
             top: 0;
             left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.85);
+            width: 100vw;
+            height: 100vh;
+            background: rgba(10, 10, 20, 0.92);
+            backdrop-filter: blur(8px);
             z-index: 2147483647;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
         `;
 
         const card = document.createElement('div');
         card.style.cssText = `
-            background: #1a1a2e;
-            border: 2px solid #e94560;
+            background: #141726;
+            border: 2px solid #ef4444;
             border-radius: 16px;
-            padding: 40px;
-            max-width: 480px;
+            padding: 36px 32px;
+            max-width: 500px;
+            width: 90%;
             text-align: center;
-            box-shadow: 0 20px 60px rgba(233, 69, 96, 0.3);
+            box-shadow: 0 25px 50px -12px rgba(239, 68, 68, 0.35);
+            animation: sentinelclip-fade-in 0.25s ease-out;
         `;
 
         card.innerHTML = `
-            <div style="font-size: 48px; margin-bottom: 16px;">🛡️</div>
-            <h2 style="color: #e94560; margin: 0 0 12px; font-size: 22px; font-weight: 700;">
+            <div style="font-family: 'JetBrains Mono', Consolas, monospace; font-size: 12px; font-weight: 700; color: #ef4444; letter-spacing: 1px; margin-bottom: 12px;">[SECURITY ENFORCEMENT // BLOCK]</div>
+            <h2 style="color: #ef4444; margin: 0 0 14px; font-size: 22px; font-weight: 700; letter-spacing: -0.02em;">
                 SentinelClip — Upload Blocked
             </h2>
-            <p style="color: #a0a0b0; margin: 0 0 24px; font-size: 14px; line-height: 1.6;">
-                ${message}
-            </p>
-            <button id="sentinelclip-dismiss" style="
-                background: #e94560;
-                color: white;
-                border: none;
-                padding: 12px 32px;
-                border-radius: 8px;
-                font-size: 14px;
-                font-weight: 600;
-                cursor: pointer;
-                transition: background 0.2s;
-            ">Dismiss</button>
+            <div style="color: #cbd5e1; margin: 0 0 24px; font-size: 14px; line-height: 1.6; word-break: break-word; background: rgba(239, 68, 68, 0.08); padding: 14px 18px; border-radius: 8px; border: 1px solid rgba(239, 68, 68, 0.2);">
+                ${escapeHtml(message)}
+            </div>
+            <div style="display: flex; justify-content: center; gap: 12px;">
+                <button id="sentinelclip-dismiss" style="
+                    background: #ef4444;
+                    color: white;
+                    border: none;
+                    padding: 11px 28px;
+                    border-radius: 8px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: background 0.15s ease-in-out;
+                ">Dismiss & Acknowledge</button>
+            </div>
         `;
 
         overlay.appendChild(card);
-        document.body.appendChild(overlay);
+        (document.body || document.documentElement).appendChild(overlay);
 
-        document.getElementById('sentinelclip-dismiss').addEventListener('click', () => {
-            removeBlockOverlay();
-        });
+        const dismissBtn = document.getElementById('sentinelclip-dismiss');
+        if (dismissBtn) {
+            dismissBtn.addEventListener('click', removeBlockOverlay);
+            dismissBtn.addEventListener('mouseover', () => { dismissBtn.style.background = '#dc2626'; });
+            dismissBtn.addEventListener('mouseout', () => { dismissBtn.style.background = '#ef4444'; });
+        }
     }
 
-    /**
-     * Show a warning notification (non-blocking).
-     */
     function showWarningBanner(message) {
+        const existing = document.querySelector('.sentinelclip-warning');
+        if (existing) existing.remove();
+
         const banner = document.createElement('div');
         banner.className = 'sentinelclip-warning';
         banner.style.cssText = `
             position: fixed;
-            top: 20px;
-            right: 20px;
-            background: linear-gradient(135deg, #1a1a2e, #16213e);
-            border: 1px solid #f0a500;
+            top: 24px;
+            right: 24px;
+            background: #181d30;
+            border: 1px solid #f59e0b;
             border-radius: 12px;
-            padding: 16px 24px;
-            max-width: 380px;
+            padding: 16px 20px;
+            max-width: 420px;
             z-index: 2147483646;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            box-shadow: 0 8px 32px rgba(240, 165, 0, 0.2);
-            animation: sentinelclip-slidein 0.3s ease-out;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            box-shadow: 0 10px 25px -5px rgba(245, 158, 11, 0.25);
+            display: flex;
+            align-items: start;
+            gap: 12px;
         `;
 
         banner.innerHTML = `
-            <div style="display: flex; align-items: start; gap: 12px;">
-                <span style="font-size: 24px;">⚠️</span>
-                <div>
-                    <div style="color: #f0a500; font-weight: 600; font-size: 13px; margin-bottom: 4px;">
-                        SentinelClip Warning
-                    </div>
-                    <div style="color: #a0a0b0; font-size: 12px; line-height: 1.5;">
-                        ${message}
-                    </div>
+            <span style="font-family: 'JetBrains Mono', Consolas, monospace; font-size: 11px; font-weight: 700; color: #f59e0b; padding-top: 2px;">[WARN]</span>
+            <div style="flex: 1;">
+                <div style="color: #f59e0b; font-weight: 600; font-size: 13px; margin-bottom: 4px;">
+                    SentinelClip Warning
                 </div>
-                <button class="sentinelclip-close" style="
-                    background: none;
-                    border: none;
-                    color: #666;
-                    font-size: 18px;
-                    cursor: pointer;
-                    padding: 0;
-                    line-height: 1;
-                ">✕</button>
+                <div style="color: #e2e8f0; font-size: 13px; line-height: 1.5;">
+                    ${escapeHtml(message)}
+                </div>
             </div>
+            <button class="sentinelclip-close" style="
+                background: none;
+                border: none;
+                color: #94a3b8;
+                font-size: 18px;
+                cursor: pointer;
+                padding: 0 4px;
+                line-height: 1;
+            ">✕</button>
         `;
 
-        // Add slide-in animation
-        const style = document.createElement('style');
-        style.textContent = `
-            @keyframes sentinelclip-slidein {
-                from { transform: translateX(100%); opacity: 0; }
-                to { transform: translateX(0); opacity: 1; }
-            }
-        `;
-        document.head.appendChild(style);
-
-        document.body.appendChild(banner);
+        (document.body || document.documentElement).appendChild(banner);
 
         banner.querySelector('.sentinelclip-close').addEventListener('click', () => {
             banner.remove();
         });
 
-        // Auto-dismiss after 8 seconds
         setTimeout(() => {
             if (banner.parentNode) {
-                banner.style.transition = 'opacity 0.3s';
+                banner.style.transition = 'opacity 0.4s';
                 banner.style.opacity = '0';
-                setTimeout(() => banner.remove(), 300);
+                setTimeout(() => banner.remove(), 400);
             }
         }, 8000);
     }
 
-    function removeBlockOverlay() {
-        const overlay = document.getElementById('sentinelclip-overlay');
-        if (overlay) overlay.remove();
+    function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 
     // -----------------------------------------------------------------------
-    // File scanning and messaging
+    // PostMessage Bridge Listener
     // -----------------------------------------------------------------------
 
-    /**
-     * Scan a file by sending its content to the background script.
-     * Returns a promise that resolves with the verdict.
-     */
-    async function scanFile(file) {
-        if (file.size > MAX_FILE_SIZE) {
-            return {
-                verdict: 'BLOCK',
-                reason: 'file_too_large_to_scan',
-                message: `Upload blocked: ${file.name} is larger than the ` +
-                    `${MAX_FILE_SIZE / 1024 / 1024}MB scanning limit.`,
-            };
-        }
-
-        if (!isScannable(file)) {
-            return { verdict: 'ALLOW', reason: 'unscannable_file_type' };
-        }
-
-        try {
-            const content = await readFileAsText(file);
-            const domain = getCurrentDomain();
-
-            return new Promise((resolve) => {
-                chrome.runtime.sendMessage(
-                    {
-                        type: 'SCAN_FILE',
-                        payload: {
-                            domain: domain,
-                            filename: file.name,
-                            content: content,
-                            fileSize: file.size,
-                        }
-                    },
-                    (response) => {
-                        if (chrome.runtime.lastError) {
-                            console.error('[SentinelClip] Message error:', chrome.runtime.lastError);
-                            resolve({ verdict: 'ALLOW', reason: 'extension_error' });
-                        } else {
-                            resolve(response || { verdict: 'ALLOW', reason: 'no_response' });
-                        }
-                    }
-                );
-            });
-        } catch (err) {
-            console.error(`[SentinelClip] Error reading ${file.name}:`, err);
-            return { verdict: 'ALLOW', reason: 'read_error' };
-        }
-    }
-
-    /**
-     * Handle file input change events.
-     */
-    async function handleFileInput(event) {
-        const input = event.target;
-        if (!input.files || input.files.length === 0) return;
-
-        if (replayingInputs.has(input)) {
-            replayingInputs.delete(input);
+    window.addEventListener('message', async (event) => {
+        if (event.source !== window || !event.data || event.data.source !== 'SENTINELCLIP_PAGE') {
             return;
         }
 
-        // Stop the site's upload handler while the native host scans the files.
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        const files = Array.from(input.files);
-        input.value = '';
+        if (event.data.type === 'SCAN_FILE_REQUEST') {
+            const { id, file, domain } = event.data;
+            const verdict = await scanFile(file, domain);
 
-        console.log(`[SentinelClip] File input detected: ${files.length} file(s)`);
-
-        for (const file of files) {
-            const result = await scanFile(file);
-            console.log(`[SentinelClip] Verdict for ${file.name}: ${result.verdict}`);
-
-            if (result.verdict === 'BLOCK') {
-                showBlockOverlay(
-                    result.message ||
-                    `File <strong>${file.name}</strong> contains sensitive data ` +
-                    `(${result.detections || 'policy violation'}). ` +
-                    `Upload has been blocked to prevent data leakage.`
-                );
-                return;
-            } else if (result.verdict === 'WARN') {
-                showWarningBanner(
-                    `File <strong>${file.name}</strong> may contain sensitive data. ` +
-                    `Proceed with caution.`
-                );
+            if (verdict.verdict === 'BLOCK') {
+                showBlockOverlay(verdict.message || `File "${file.name}" blocked by SentinelClip.`);
+            } else if (verdict.verdict === 'WARN') {
+                showWarningBanner(verdict.message || `File "${file.name}" may contain sensitive data.`);
             }
+
+            window.postMessage({
+                source: 'SENTINELCLIP_EXT',
+                type: 'SCAN_FILE_RESPONSE',
+                id: id,
+                verdict: verdict
+            }, '*');
+        } else if (event.data.type === 'SHOW_BLOCK_OVERLAY') {
+            showBlockOverlay(event.data.message);
+        } else if (event.data.type === 'SHOW_WARN_BANNER') {
+            showWarningBanner(event.data.message);
         }
+    });
 
-        const transfer = new DataTransfer();
-        files.forEach((file) => transfer.items.add(file));
-        replayingInputs.add(input);
-        input.files = transfer.files;
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-    }
-
-    /**
-     * Handle drag-and-drop file events.
-     */
-    async function handleDrop(event) {
-        if (!event.dataTransfer || !event.dataTransfer.files || event.dataTransfer.files.length === 0) {
-            return;
-        }
-
-        if (replayingDrops.has(event.target)) {
-            replayingDrops.delete(event.target);
-            return;
-        }
-
-        // Pause the drop before the site's asynchronous upload handler runs.
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        const files = Array.from(event.dataTransfer.files);
-
-        console.log(`[SentinelClip] Drop detected: ${files.length} file(s)`);
-
-        for (const file of files) {
-            const result = await scanFile(file);
-            console.log(`[SentinelClip] Verdict for ${file.name}: ${result.verdict}`);
-
-            if (result.verdict === 'BLOCK') {
-                showBlockOverlay(
-                    result.message ||
-                    `File <strong>${file.name}</strong> contains sensitive data ` +
-                    `(${result.detections || 'policy violation'}). ` +
-                    `Upload has been blocked to prevent data leakage.`
-                );
-                return;
-            } else if (result.verdict === 'WARN') {
-                showWarningBanner(
-                    `File <strong>${file.name}</strong> may contain sensitive data. ` +
-                    `Proceed with caution.`
-                );
-            }
-        }
-
-        const transfer = new DataTransfer();
-        files.forEach((file) => transfer.items.add(file));
-        replayingDrops.add(event.target);
-        const replay = new DragEvent('drop', {
-            bubbles: true,
-            cancelable: true,
-            dataTransfer: transfer,
-        });
-        event.target.dispatchEvent(replay);
-    }
-
-    // -----------------------------------------------------------------------
-    // Event listeners
-    // -----------------------------------------------------------------------
-
-    // Listen for file input changes (captures existing and dynamically added inputs)
-    document.addEventListener('change', (event) => {
-        if (event.target && event.target.type === 'file') {
-            handleFileInput(event);
-        }
-    }, true);
-
-    // Listen for drag-and-drop
-    document.addEventListener('drop', handleDrop, true);
-
-    console.log('[SentinelClip] Content script loaded for', getCurrentDomain());
+    console.log('[SentinelClip] Content script ready on', window.location.hostname);
 })();

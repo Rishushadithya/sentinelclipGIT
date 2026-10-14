@@ -1,23 +1,12 @@
 @echo off
-:: SentinelClip Windows Application Launcher
-:: Double-click this file to launch SentinelClip as a background app.
-:: Automatically requests Administrator privileges if required.
-
-cd /d "%~dp0"
-
-:: Check for admin rights
-net session >nul 2>&1
-if %errorlevel% neq 0 (
-    echo Requesting Administrator privileges...
-    powershell -Command "Start-Process '%~f0' -Verb RunAs"
-    exit /b
+setlocal
+"%SystemRoot%\System32\schtasks.exe" /Run /TN "\SentinelClip\Tray" >nul 2>&1
+if errorlevel 1 (
+    echo SentinelClip could not start.
+    echo The elevated SentinelClip startup task is not registered or Windows denied access.
+    echo Run SentinelClip-Setup-Offline.exe again and approve the administrator prompt.
+    echo.
+    pause
+    exit /b 1
 )
-
-:: Run app_launcher.pyw using pythonw.exe (windowless GUI executable)
-if exist ".venv\Scripts\pythonw.exe" (
-    start "" ".venv\Scripts\pythonw.exe" "app_launcher.pyw"
-) else (
-    start "" pythonw "app_launcher.pyw"
-)
-
-exit
+exit /b 0

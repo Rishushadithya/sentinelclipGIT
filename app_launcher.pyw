@@ -2,9 +2,7 @@
 SentinelClip — Windows Desktop Application & System Tray App
 
 Runs as a native Windows tray app without open console windows (using pythonw.exe).
-Auto-elevates to Administrator if required, manages all 3 background services
-(Flask API, Clipboard Engine, Streamlit Dashboard), and provides a system tray
-menu with quick actions.
+Manages the services selected during setup and provides a system tray menu.
 """
 
 import os
@@ -18,16 +16,26 @@ import requests
 from PIL import Image, ImageDraw
 import pystray
 from pystray import MenuItem as item
+from deployment_config import load_deployment_config, services_for_role
 
 # Ensure project root is on path
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
+DEPLOYMENT = load_deployment_config(os.path.join(PROJECT_ROOT, "config", "deployment.json"))
+RUN_API, RUN_CLIPBOARD, RUN_DASHBOARD = services_for_role(DEPLOYMENT["role"])
+os.environ["SENTINELCLIP_API_BASE"] = DEPLOYMENT["api_base"]
+os.environ["SENTINELCLIP_HOST"] = DEPLOYMENT["api_host"]
+os.environ["SENTINELCLIP_PORT"] = str(DEPLOYMENT["api_port"])
+os.environ["SENTINELCLIP_DASHBOARD_HOST"] = DEPLOYMENT["dashboard_host"]
+os.environ["SENTINELCLIP_DASHBOARD_PORT"] = str(DEPLOYMENT["dashboard_port"])
 
 PYTHON_EXE = os.path.join(PROJECT_ROOT, ".venv", "Scripts", "python.exe")
 PYTHONW_EXE = os.path.join(PROJECT_ROOT, ".venv", "Scripts", "pythonw.exe")
 STREAMLIT_EXE = os.path.join(PROJECT_ROOT, ".venv", "Scripts", "streamlit.exe")
-STREAMLIT_HOST = os.getenv("SENTINELCLIP_DASHBOARD_HOST", "0.0.0.0")
-STREAMLIT_PORT = os.getenv("SENTINELCLIP_DASHBOARD_PORT", "8501")
+STREAMLIT_HOST = os.environ["SENTINELCLIP_DASHBOARD_HOST"]
+STREAMLIT_PORT = os.environ["SENTINELCLIP_DASHBOARD_PORT"]
+LOCAL_API_BASE = f"http://127.0.0.1:{DEPLOYMENT['api_port']}/api/v1"
+ADMIN_TOKEN_FILE = os.path.join(PROJECT_ROOT, "config", ".admin_token")
 
 if not os.path.exists(PYTHON_EXE):
     PYTHON_EXE = sys.executable
@@ -89,27 +97,6 @@ class SingleInstance:
             self.mutex = None
 
 
-def is_admin() -> bool:
-    """Check if the current process has Administrator privileges."""
-    try:
-        return ctypes.windll.shell32.IsUserAnAdmin() != 0
-    except Exception:
-        return False
-
-
-def run_as_admin():
-    """Relaunch current script with Administrator elevation via UAC."""
-    script = os.path.abspath(sys.argv[0])
-    params = f'"{script}"'
-    # Use pythonw if available to prevent black CMD window
-    executable = PYTHONW_EXE if os.path.exists(PYTHONW_EXE) else sys.executable
-
-    ctypes.windll.shell32.ShellExecuteW(
-        None, "runas", executable, params, PROJECT_ROOT, 1
-    )
-    sys.exit(0)
-
-
 def create_tray_icon_image() -> Image.Image:
     """Create a 64x64 shield icon for system tray if image asset isn't found."""
     icon_path = os.path.join(PROJECT_ROOT, "browser_extension", "icons", "icon48.png")
@@ -127,30 +114,27 @@ def create_tray_icon_image() -> Image.Image:
 
 
 def start_services():
-    """Start all 3 background services."""
+    """Start only the background services selected by the installed role."""
     creation_flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
-    # 1. Flask API Hub
-    if processes["api"] is None or processes["api"].poll() is not None:
+    if RUN_API and (processes["api"] is None or processes["api"].poll() is not None):
         processes["api"] = subprocess.Popen(
             [PYTHON_EXE, "-m", "api.app"],
             cwd=PROJECT_ROOT,
             creationflags=creation_flags,
         )
 
-    # Give API a moment to spin up
-    time.sleep(1.5)
+    if RUN_API:
+        time.sleep(1.5)
 
-    # 2. Clipboard Sentinel Engine
-    if processes["clipboard"] is None or processes["clipboard"].poll() is not None:
+    if RUN_CLIPBOARD and (processes["clipboard"] is None or processes["clipboard"].poll() is not None):
         processes["clipboard"] = subprocess.Popen(
             [PYTHON_EXE, "-m", "clipboard_engine.main"],
             cwd=PROJECT_ROOT,
             creationflags=creation_flags,
         )
 
-    # 3. Streamlit Dashboard
-    if processes["dashboard"] is None or processes["dashboard"].poll() is not None:
+    if RUN_DASHBOARD and (processes["dashboard"] is None or processes["dashboard"].poll() is not None):
         if os.path.exists(STREAMLIT_EXE):
             cmd = [STREAMLIT_EXE, "run", "dashboard/Home.py", "--server.address", STREAMLIT_HOST, "--server.port", STREAMLIT_PORT, "--server.headless", "true"]
         else:
@@ -180,13 +164,14 @@ def stop_services():
 
 def open_dashboard(icon=None, item=None):
     """Open Streamlit Dashboard in default browser."""
-    webbrowser.open("http://localhost:8501")
+    webbrowser.open(f"http://localhost:{STREAMLIT_PORT}")
 
 
 def verify_audit_integrity(icon=None, item=None):
     """Call API to verify audit chain integrity and show a notification."""
     try:
-        resp = requests.get("http://127.0.0.1:5000/api/v1/audit/verify", timeout=5)
+        api_base = os.environ["SENTINELCLIP_API_BASE"]
+        resp = requests.get(f"{api_base}/audit/verify", timeout=5)
         data = resp.json()
         if data.get("valid"):
             msg = f"Audit Chain Valid! All {data.get('verified_entries', 0)} entries verified."
@@ -200,10 +185,25 @@ def verify_audit_integrity(icon=None, item=None):
         icon.notify(f"Could not connect to API: {e}", "SentinelClip Error")
 
 
-def quit_app(icon, item):
-    """Exit the system tray application and stop services."""
-    stop_services()
-    icon.stop()
+def create_agent_enrollment_code(icon=None, item=None):
+    """Create a short-lived enrollment code and copy it for the administrator."""
+    try:
+        with open(ADMIN_TOKEN_FILE, "r", encoding="utf-8") as token_file:
+            admin_token = token_file.read().strip()
+        response = requests.post(
+            f"{LOCAL_API_BASE}/devices/enrollment-codes",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={"expires_minutes": 10},
+            timeout=5,
+        )
+        response.raise_for_status()
+        code = response.json()["code"]
+        import pyperclip
+
+        pyperclip.copy(code)
+        icon.notify("One-time code copied. It expires in 10 minutes.", "SentinelClip Enrollment")
+    except Exception as exc:
+        icon.notify(f"Could not create enrollment code: {exc}", "SentinelClip Error")
 
 
 def main():
@@ -212,23 +212,21 @@ def main():
         instance.request_restart()
         return
 
-    # Enforce elevation if not admin (ensures registry & low-level clipboard access)
-    if not is_admin():
-        run_as_admin()
-        return
-
     # Start background services
     start_services()
 
     # Create system tray icon
     image = create_tray_icon_image()
     menu = pystray.Menu(
-        item("🛡️ SentinelClip DLP (Active)", lambda icon, item: None, enabled=False),
+        item(f"SentinelClip DLP ({DEPLOYMENT['role'].title()})", lambda icon, item: None, enabled=False),
         pystray.Menu.SEPARATOR,
-        item("📊 Open Dashboard", open_dashboard, default=True),
-        item("🔍 Verify Audit Chain Integrity", verify_audit_integrity),
-        pystray.Menu.SEPARATOR,
-        item("🚪 Exit SentinelClip", quit_app),
+        item("Open Dashboard", open_dashboard, default=True, enabled=RUN_DASHBOARD),
+        item(
+            "Copy Agent Enrollment Code",
+            create_agent_enrollment_code,
+            enabled=RUN_API,
+        ),
+        item("Verify Audit Chain Integrity", verify_audit_integrity),
     )
 
     icon = pystray.Icon("SentinelClip", image, "SentinelClip DLP Middleware", menu)
@@ -239,8 +237,10 @@ def main():
 
     instance.watch_for_restart(restart_current_instance)
     
-    # Auto open dashboard on start
-    threading.Thread(target=lambda: (time.sleep(2), webbrowser.open("http://localhost:8501")), daemon=True).start()
+    if RUN_DASHBOARD:
+        threading.Thread(
+            target=lambda: (time.sleep(2), open_dashboard()), daemon=True
+        ).start()
 
     try:
         icon.run()

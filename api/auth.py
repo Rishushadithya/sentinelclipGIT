@@ -38,8 +38,6 @@ def get_or_create_admin_token() -> str:
         f.write(token)
 
     print(f"[INFO] Admin token generated and saved to {TOKEN_FILE}")
-    print(f"[INFO] Token: {token}")
-    print(f"[INFO] Use this token to authenticate dashboard write operations.")
 
     return token
 

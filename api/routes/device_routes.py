@@ -30,25 +30,63 @@ def _parse_timestamp(value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+@device_bp.route("/api/v1/devices/enrollment-code", methods=["GET"])
+@require_auth
+def get_current_enrollment_code():
+    """Get the active enrollment code, or automatically generate a new one if none is active."""
+    now = _utc_now()
+    row = g.db.execute(
+        """
+        SELECT * FROM enrollment_codes
+        WHERE used_at IS NULL AND expires_at > ? AND raw_code IS NOT NULL
+        ORDER BY id DESC LIMIT 1
+        """,
+        (now.isoformat(),),
+    ).fetchone()
+
+    if row and row["raw_code"]:
+        return jsonify({
+            "code": row["raw_code"],
+            "expires_at": row["expires_at"],
+            "created_at": row["created_at"],
+            "status": "active",
+        }), 200
+
+    # Auto-generate a fresh code if none is active
+    code = secrets.token_urlsafe(12)
+    expires_at = now + timedelta(hours=24)
+    g.db.execute(
+        "INSERT INTO enrollment_codes (code_hash, raw_code, created_at, expires_at) VALUES (?, ?, ?, ?)",
+        (hash_device_token(code), code, now.isoformat(), expires_at.isoformat()),
+    )
+    g.db.commit()
+    return jsonify({
+        "code": code,
+        "expires_at": expires_at.isoformat(),
+        "created_at": now.isoformat(),
+        "status": "active",
+    }), 200
+
+
 @device_bp.route("/api/v1/devices/enrollment-codes", methods=["POST"])
 @require_auth
 def create_enrollment_code():
     """Generate a short-lived, one-time enrollment code for an agent."""
     data = request.get_json(silent=True) or {}
     try:
-        expires_minutes = int(data.get("expires_minutes", 10))
+        expires_minutes = int(data.get("expires_minutes", 60))
     except (TypeError, ValueError):
         return jsonify({"error": "expires_minutes must be an integer."}), 400
 
-    if not 1 <= expires_minutes <= 60:
-        return jsonify({"error": "expires_minutes must be between 1 and 60."}), 400
+    if not 1 <= expires_minutes <= 1440:
+        return jsonify({"error": "expires_minutes must be between 1 and 1440."}), 400
 
     code = secrets.token_urlsafe(12)
     now = _utc_now()
     expires_at = now + timedelta(minutes=expires_minutes)
     g.db.execute(
-        "INSERT INTO enrollment_codes (code_hash, created_at, expires_at) VALUES (?, ?, ?)",
-        (hash_device_token(code), now.isoformat(), expires_at.isoformat()),
+        "INSERT INTO enrollment_codes (code_hash, raw_code, created_at, expires_at) VALUES (?, ?, ?, ?)",
+        (hash_device_token(code), code, now.isoformat(), expires_at.isoformat()),
     )
     g.db.commit()
     return jsonify({"code": code, "expires_at": expires_at.isoformat()}), 201
@@ -98,10 +136,21 @@ def enroll_device():
             hash_device_token(device_token),
         ),
     )
+
+    # Consume the used enrollment code
     g.db.execute(
         "UPDATE enrollment_codes SET used_at = ? WHERE id = ?",
         (now.isoformat(), code_row["id"]),
     )
+
+    # Automatically generate a new fresh enrollment code for the next device!
+    next_code = secrets.token_urlsafe(12)
+    next_expires_at = now + timedelta(hours=24)
+    g.db.execute(
+        "INSERT INTO enrollment_codes (code_hash, raw_code, created_at, expires_at) VALUES (?, ?, ?, ?)",
+        (hash_device_token(next_code), next_code, now.isoformat(), next_expires_at.isoformat()),
+    )
+
     g.db.commit()
 
     return jsonify({

@@ -1,6 +1,8 @@
 flask
 flask-cors
+waitress
 pyperclip
+pystray
 streamlit
 requests
 pandas

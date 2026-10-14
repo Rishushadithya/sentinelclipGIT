@@ -37,6 +37,8 @@ def get_latest_audit_hash(conn: sqlite3.Connection) -> str:
     Get the current_hash of the most recent audit log entry.
     Returns GENESIS_HASH if the log is empty.
     """
+    if conn.row_factory is None:
+        conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     row = cursor.execute(
         "SELECT current_hash FROM audit_log ORDER BY id DESC LIMIT 1"
@@ -130,6 +132,8 @@ def verify_chain(conn: sqlite3.Connection) -> dict:
             "message": str,
         }
     """
+    if conn.row_factory is None:
+        conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     rows = cursor.execute(
         "SELECT * FROM audit_log ORDER BY id ASC"
@@ -176,18 +180,32 @@ def verify_chain(conn: sqlite3.Connection) -> dict:
         # Recompute and verify current hash
         recomputed = compute_hash(event_data, row["previous_hash"])
         if recomputed != row["current_hash"]:
-            return {
-                "valid": False,
-                "total_entries": len(rows),
-                "verified_entries": verified,
-                "first_mismatch_id": row["id"],
-                "message": (
-                    f"Hash mismatch at entry ID {row['id']}: "
-                    f"stored '{row['current_hash'][:16]}...' "
-                    f"does not match recomputed '{recomputed[:16]}...'. "
-                    f"Data may have been tampered with."
-                ),
+            # Check legacy format if pc_user_name is None
+            legacy_data = {
+                "timestamp": row["timestamp"],
+                "source": row["source"],
+                "domain": row["domain"],
+                "rule_name": row["rule_name"],
+                "severity": row["severity"],
+                "action_taken": row["action_taken"],
+                "detection_summary": row["detection_summary"],
             }
+            recomputed_legacy = compute_hash(legacy_data, row["previous_hash"])
+            if recomputed_legacy == row["current_hash"]:
+                recomputed = recomputed_legacy
+            else:
+                return {
+                    "valid": False,
+                    "total_entries": len(rows),
+                    "verified_entries": verified,
+                    "first_mismatch_id": row["id"],
+                    "message": (
+                        f"Hash mismatch at entry ID {row['id']}: "
+                        f"stored '{row['current_hash'][:16]}...' "
+                        f"does not match recomputed '{recomputed[:16]}...'. "
+                        f"Data may have been tampered with."
+                    ),
+                }
 
         expected_previous = row["current_hash"]
         verified += 1
