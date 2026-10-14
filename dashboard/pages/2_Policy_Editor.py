@@ -43,6 +43,19 @@ def _rule_key(rule_id, fallback_index):
 token = st.session_state.get("token", "")
 api = SentinelClipAPI(admin_token=token)
 
+try:
+    enrolled_devices = api.get_devices() if token else []
+except Exception:
+    enrolled_devices = []
+
+device_scope_options = {
+    device["id"]: f"{device['hostname']} ({device['id'][:8]})"
+    for device in enrolled_devices
+}
+group_scope_options = sorted({
+    device["group_name"] for device in enrolled_devices if device.get("group_name")
+})
+
 st.markdown("# 📋 Policy Editor")
 st.markdown("Manage detection rules for sensitive content patterns.")
 st.markdown("---")
@@ -82,6 +95,20 @@ with st.expander("➕ Add New Rule", expanded=False):
                 options=["WARN", "OBFUSCATE", "REDACT", "BLOCK"],
                 index=3,
             )
+            new_scope_type = st.selectbox(
+                "Policy Scope",
+                options=["global", "device", "group"],
+                format_func=lambda value: "All PCs" if value == "global" else value.title(),
+            )
+            if new_scope_type == "device" and device_scope_options:
+                new_scope_target = st.selectbox(
+                    "Target Device", list(device_scope_options),
+                    format_func=lambda value: device_scope_options[value],
+                )
+            elif new_scope_type == "group" and group_scope_options:
+                new_scope_target = st.selectbox("Target Group", group_scope_options)
+            else:
+                new_scope_target = None
             new_replacement = st.text_input(
                 "Replacement Value",
                 placeholder="Used when action is OBFUSCATE",
@@ -102,6 +129,8 @@ with st.expander("➕ Add New Rule", expanded=False):
                         "pattern_type": new_type,
                         "severity": new_severity,
                         "action": new_action,
+                        "scope_type": new_scope_type,
+                        "scope_target": new_scope_target,
                         "replacement_value": new_replacement or None,
                         "enabled": True,
                     })
@@ -198,6 +227,35 @@ try:
                             value=enabled,
                             key=f"enabled_{rule_key}",
                         )
+                        scope_type_options = ["global", "device", "group"]
+                        current_scope_type = rule.get("scope_type", "global")
+                        edit_scope_type = st.selectbox(
+                            "Policy Scope",
+                            options=scope_type_options,
+                            index=scope_type_options.index(current_scope_type)
+                            if current_scope_type in scope_type_options else 0,
+                            format_func=lambda value: "All PCs" if value == "global" else value.title(),
+                            key=f"scope_type_{rule_key}",
+                        )
+                        if edit_scope_type == "device" and device_scope_options:
+                            device_values = list(device_scope_options)
+                            current_target = rule.get("scope_target")
+                            target_index = device_values.index(current_target) if current_target in device_values else 0
+                            edit_scope_target = st.selectbox(
+                                "Target Device", device_values,
+                                index=target_index,
+                                format_func=lambda value: device_scope_options[value],
+                                key=f"scope_target_{rule_key}",
+                            )
+                        elif edit_scope_type == "group" and group_scope_options:
+                            target_index = group_scope_options.index(rule.get("scope_target")) if rule.get("scope_target") in group_scope_options else 0
+                            edit_scope_target = st.selectbox(
+                                "Target Group", group_scope_options,
+                                index=target_index,
+                                key=f"scope_target_{rule_key}",
+                            )
+                        else:
+                            edit_scope_target = None
 
                     btn_col1, btn_col2, _ = st.columns([1, 1, 4])
 
@@ -219,6 +277,8 @@ try:
                                     "pattern_type": edit_type,
                                     "severity": edit_severity,
                                     "action": edit_action,
+                                    "scope_type": edit_scope_type,
+                                    "scope_target": edit_scope_target,
                                     "replacement_value": edit_replacement or None,
                                     "enabled": edit_enabled,
                                 })

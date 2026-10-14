@@ -45,6 +45,28 @@ def auth_headers(admin_token):
     return {"Authorization": f"Bearer {admin_token}"}
 
 
+@pytest.fixture
+def device_headers(client, auth_headers):
+    """Enroll a test agent and return its device bearer headers."""
+    code_response = client.post(
+        "/api/v1/devices/enrollment-codes",
+        json={},
+        headers=auth_headers,
+    )
+    assert code_response.status_code == 201
+    enroll_response = client.post(
+        "/api/v1/devices/enroll",
+        json={
+            "code": code_response.get_json()["code"],
+            "hostname": "TEST-PC",
+            "os_user": "test-user",
+            "group_name": "test-group",
+        },
+    )
+    assert enroll_response.status_code == 201
+    return {"Authorization": f"Bearer {enroll_response.get_json()['device_token']}"}
+
+
 # ===========================================================================
 # Health Check
 # ===========================================================================
@@ -63,9 +85,9 @@ class TestHealth:
 # ===========================================================================
 
 class TestPolicyRoutes:
-    def test_get_policies_returns_seed_rules(self, client):
+    def test_get_policies_returns_seed_rules(self, client, device_headers):
         """Default seed rules should be loaded on first run."""
-        response = client.get("/api/v1/policy")
+        response = client.get("/api/v1/policy", headers=device_headers)
         assert response.status_code == 200
         data = response.get_json()
         assert "rules" in data
@@ -75,8 +97,8 @@ class TestPolicyRoutes:
         assert "AWS Access Key" in rule_names
         assert "JWT Token" in rule_names
 
-    def test_get_policies_has_required_fields(self, client):
-        response = client.get("/api/v1/policy")
+    def test_get_policies_has_required_fields(self, client, device_headers):
+        response = client.get("/api/v1/policy", headers=device_headers)
         data = response.get_json()
         for rule in data["rules"]:
             assert "rule_name" in rule
@@ -192,7 +214,7 @@ class TestPolicyRoutes:
 # ===========================================================================
 
 class TestLogRoutes:
-    def test_log_event(self, client):
+    def test_log_event(self, client, device_headers):
         response = client.post(
             "/api/v1/log",
             json={
@@ -207,6 +229,7 @@ class TestLogRoutes:
                 ],
                 "action_taken": "BLOCK",
             },
+            headers=device_headers,
         )
         assert response.status_code == 201
         data = response.get_json()
@@ -218,7 +241,7 @@ class TestLogRoutes:
         event = events_response.get_json()["events"][0]
         assert event["pc_user_name"] == "DESKTOP-USER"
 
-    def test_log_browser_upload(self, client):
+    def test_log_browser_upload(self, client, device_headers):
         response = client.post(
             "/api/v1/log",
             json={
@@ -233,20 +256,23 @@ class TestLogRoutes:
                 ],
                 "action_taken": "OBFUSCATE",
             },
+            headers=device_headers,
         )
         assert response.status_code == 201
 
-    def test_log_requires_source(self, client):
+    def test_log_requires_source(self, client, device_headers):
         response = client.post(
             "/api/v1/log",
             json={"detections": [], "action_taken": "NONE"},
+            headers=device_headers,
         )
         assert response.status_code == 400
 
-    def test_log_validates_source(self, client):
+    def test_log_validates_source(self, client, device_headers):
         response = client.post(
             "/api/v1/log",
             json={"source": "invalid_source"},
+            headers=device_headers,
         )
         assert response.status_code == 400
 
@@ -256,7 +282,7 @@ class TestLogRoutes:
 # ===========================================================================
 
 class TestEventRoutes:
-    def _log_events(self, client, count=5):
+    def _log_events(self, client, device_headers, count=5):
         """Helper to create test events."""
         for i in range(count):
             client.post(
@@ -273,10 +299,11 @@ class TestEventRoutes:
                     ],
                     "action_taken": "WARN",
                 },
+                headers=device_headers,
             )
 
-    def test_get_events_default(self, client):
-        self._log_events(client, 3)
+    def test_get_events_default(self, client, device_headers):
+        self._log_events(client, device_headers, 3)
         response = client.get("/api/v1/events")
         assert response.status_code == 200
         data = response.get_json()
@@ -284,22 +311,22 @@ class TestEventRoutes:
         assert "total" in data
         assert len(data["events"]) == 3
 
-    def test_get_events_pagination(self, client):
-        self._log_events(client, 5)
+    def test_get_events_pagination(self, client, device_headers):
+        self._log_events(client, device_headers, 5)
         response = client.get("/api/v1/events?limit=2&offset=0")
         data = response.get_json()
         assert len(data["events"]) == 2
         assert data["total"] == 5
 
-    def test_get_events_filter_severity(self, client):
-        self._log_events(client, 6)
+    def test_get_events_filter_severity(self, client, device_headers):
+        self._log_events(client, device_headers, 6)
         response = client.get("/api/v1/events?severity=HIGH")
         data = response.get_json()
         for event in data["events"]:
             assert event["severity"] == "HIGH"
 
-    def test_get_events_filter_source(self, client):
-        self._log_events(client, 4)
+    def test_get_events_filter_source(self, client, device_headers):
+        self._log_events(client, device_headers, 4)
         response = client.get("/api/v1/events?source=clipboard")
         data = response.get_json()
         for event in data["events"]:
@@ -312,15 +339,15 @@ class TestEventRoutes:
         assert data["valid"] is True
         assert data["total_entries"] == 0
 
-    def test_verify_audit_after_events(self, client):
-        self._log_events(client, 5)
+    def test_verify_audit_after_events(self, client, device_headers):
+        self._log_events(client, device_headers, 5)
         response = client.get("/api/v1/audit/verify")
         data = response.get_json()
         assert data["valid"] is True
         assert data["total_entries"] == 5
 
-    def test_stats(self, client):
-        self._log_events(client, 3)
+    def test_stats(self, client, device_headers):
+        self._log_events(client, device_headers, 3)
         response = client.get("/api/v1/stats")
         assert response.status_code == 200
         data = response.get_json()

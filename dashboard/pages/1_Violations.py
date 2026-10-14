@@ -7,11 +7,44 @@ Filters: severity, source, date range. Pagination included.
 
 import os
 import sys
+import json
 import streamlit as st
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dashboard.api_client import SentinelClipAPI
+
+
+def format_detection_summary(value: str) -> str:
+    """Turn stored detection JSON into a compact, readable table value."""
+    if not value:
+        return "No detection details"
+
+    try:
+        detections = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return "Detection details unavailable"
+
+    rule_detections = [
+        detection for detection in detections
+        if isinstance(detection, dict) and detection.get("rule_name")
+    ]
+    if not rule_detections:
+        return "No rule details"
+
+    labels = []
+    for detection in rule_detections:
+        label = detection["rule_name"]
+        action = detection.get("action")
+        if action:
+            label = f"{label} ({action})"
+        labels.append(label)
+
+    visible_labels = labels[:2]
+    summary = ", ".join(visible_labels)
+    if len(labels) > len(visible_labels):
+        summary += f" +{len(labels) - len(visible_labels)} more"
+    return f"{len(labels)} detection{'s' if len(labels) != 1 else ''} · {summary}"
 
 st.set_page_config(
     page_title="SentinelClip — Violations",
@@ -106,6 +139,11 @@ try:
         ]
         available_cols = [c for c in display_cols if c in df.columns]
 
+        if "detection_summary" in df.columns:
+            df["detection_summary"] = df["detection_summary"].apply(
+                format_detection_summary
+            )
+
         # Color-code severity
         def style_severity(val):
             colors = {
@@ -120,6 +158,14 @@ try:
             use_container_width=True,
             hide_index=True,
             height=600,
+            column_config={
+                "id": st.column_config.NumberColumn("ID", width="small"),
+                "timestamp": st.column_config.TextColumn("Timestamp", width="medium"),
+                "pc_user_name": st.column_config.TextColumn("PC User", width="small"),
+                "detection_summary": st.column_config.TextColumn(
+                    "Detection Summary", width="large"
+                ),
+            },
         )
 
         # Pagination info

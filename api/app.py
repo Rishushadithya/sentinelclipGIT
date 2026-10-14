@@ -4,8 +4,9 @@ SentinelClip — Flask API Hub Entrypoint
 The Flask API is the SINGLE source of truth for the database.
 No other component writes to SQLite directly.
 
-Binds to 127.0.0.1:5000 ONLY — never 0.0.0.0.
-CORS restricted to localhost and the browser extension origin.
+Binds to SENTINELCLIP_HOST (default 0.0.0.0 for LAN fleet mode).
+Configure the firewall to allow port 5000 only from the local subnet.
+CORS is restricted to configured local origins and the browser extension.
 """
 
 import os
@@ -16,6 +17,7 @@ from api.auth import get_or_create_admin_token
 from api.routes.policy_routes import policy_bp
 from api.routes.log_routes import log_bp
 from api.routes.event_routes import event_bp
+from api.routes.device_routes import device_bp
 
 
 def create_app(db_path: str = None) -> Flask:
@@ -43,6 +45,7 @@ def create_app(db_path: str = None) -> Flask:
     app.register_blueprint(policy_bp)
     app.register_blueprint(log_bp)
     app.register_blueprint(event_bp)
+    app.register_blueprint(device_bp)
 
     # Database lifecycle
     @app.before_request
@@ -69,8 +72,11 @@ def create_app(db_path: str = None) -> Flask:
 
 if __name__ == "__main__":
     app = create_app()
+    host = os.getenv("SENTINELCLIP_HOST", "0.0.0.0")
+    port = int(os.getenv("SENTINELCLIP_PORT", "5000"))
     print("\n" + "=" * 60)
     print("  SentinelClip API Hub")
-    print("  Listening on http://127.0.0.1:5000")
+    print(f"  Listening on http://{host}:{port}")
+    print("  Configure the firewall to restrict this port to the local subnet.")
     print("=" * 60 + "\n")
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    app.run(host=host, port=port, debug=True)

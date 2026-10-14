@@ -81,9 +81,11 @@ class SentinelClipEngine:
     Coordinates watcher, detector, sanitizer, and reporter components.
     """
 
-    def __init__(self, api_base: str = "http://127.0.0.1:5000/api/v1"):
-        self.api_base = api_base
-        self.policy_cache = PolicyCache(api_base=api_base)
+    def __init__(self, api_base: str | None = None):
+        self.api_base = api_base or os.getenv(
+            "SENTINELCLIP_API_BASE", "http://127.0.0.1:5000/api/v1"
+        )
+        self.policy_cache = PolicyCache(api_base=self.api_base)
         self.event_count = 0
         self.block_count = 0
         self.company_domains = self._load_company_domains()
@@ -124,6 +126,10 @@ class SentinelClipEngine:
         # Get rules and scan
         rules = self.policy_cache.get_rules()
         if not rules:
+            logger.warning(
+                "Clipboard content was not sanitized: no policy rules available. "
+                "Enroll this agent and verify the central API is reachable."
+            )
             return  # No rules available
 
         # Run sanitization (includes detection)
@@ -188,17 +194,20 @@ class SentinelClipEngine:
                 )
             )
 
-            if company_email_domains:
-                domains_preview = ", ".join(sorted(company_email_domains)[:2])
-                if len(company_email_domains) > 2:
-                    domains_preview += ", ..."
-                show_warning_notification(
-                    title="SentinelClip Warning: Company Email Copied",
-                    message=(
-                        "Company email detected in clipboard. Copy is allowed, "
-                        f"but share carefully. Domains: {domains_preview}"
-                    ),
-                )
+
+        # Company-email warnings are independent of other sanitization actions.
+        # This must also run when the same clipboard text is redacted or blocked.
+        if company_email_domains:
+            domains_preview = ", ".join(sorted(company_email_domains)[:2])
+            if len(company_email_domains) > 2:
+                domains_preview += ", ..."
+            show_warning_notification(
+                title="SentinelClip Warning: Company Email Copied",
+                message=(
+                    "Company email detected in clipboard. Copy is allowed, "
+                    f"but share carefully. Domains: {domains_preview}"
+                ),
+            )
 
         # Log each detection
         for det in rule_detections:

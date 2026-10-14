@@ -20,6 +20,8 @@ class PolicyRuleModel:
     action: str = "WARN"              # 'WARN' | 'OBFUSCATE' | 'REDACT' | 'BLOCK'
     replacement_value: Optional[str] = None
     enabled: bool = True
+    scope_type: str = "global"        # 'global' | 'device' | 'group'
+    scope_target: Optional[str] = None
     created_at: str = ""
     updated_at: str = ""
 
@@ -33,6 +35,8 @@ class PolicyRuleModel:
             "action": self.action,
             "replacement_value": self.replacement_value,
             "enabled": self.enabled,
+            "scope_type": self.scope_type,
+            "scope_target": self.scope_target,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -48,6 +52,8 @@ class PolicyRuleModel:
             action=row["action"],
             replacement_value=row["replacement_value"],
             enabled=bool(row["enabled"]),
+            scope_type=row["scope_type"] if "scope_type" in row.keys() else "global",
+            scope_target=row["scope_target"] if "scope_target" in row.keys() else None,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )

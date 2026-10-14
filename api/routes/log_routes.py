@@ -9,11 +9,13 @@ import getpass
 from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request, g
 from api.audit import record_audit_event
+from api.device_auth import require_device_auth
 
 log_bp = Blueprint("log", __name__)
 
 
 @log_bp.route("/api/v1/log", methods=["POST"])
+@require_device_auth
 def log_event():
     """
     Record a detection event from the clipboard engine or browser extension.
@@ -46,7 +48,7 @@ def log_event():
 
     # Use provided timestamp or generate one
     timestamp = data.get("timestamp") or datetime.now(timezone.utc).isoformat()
-    pc_user_name = data.get("pc_user_name") or getpass.getuser()
+    pc_user_name = data.get("pc_user_name") or g.device["os_user"] or getpass.getuser()
 
     # Extract detection info
     detections = data.get("detections", [])

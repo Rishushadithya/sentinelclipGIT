@@ -8,12 +8,14 @@ is unreachable.
 
 import logging
 import getpass
+import os
 import requests
 from datetime import datetime, timezone
+from clipboard_engine.device_credentials import get_device_token
 
 logger = logging.getLogger("sentinelclip.reporter")
 
-API_BASE = "http://127.0.0.1:5000/api/v1"
+API_BASE = os.getenv("SENTINELCLIP_API_BASE", "http://127.0.0.1:5000/api/v1")
 
 
 def report_detection(
@@ -47,9 +49,14 @@ def report_detection(
     }
 
     try:
+        device_token = get_device_token(api_base)
+        if not device_token:
+            logger.error("Cannot report detection: no enrolled device credentials")
+            return False
         resp = requests.post(
             f"{api_base}/log",
             json=payload,
+            headers={"Authorization": f"Bearer {device_token}"},
             timeout=3,
         )
         resp.raise_for_status()

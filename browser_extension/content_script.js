@@ -59,6 +59,8 @@
 
     const SUPPORTED_EXTENSIONS = BLOCKABLE_EXTENSIONS;
     const SUPPORTED_MIME_PREFIXES = BLOCKABLE_MIME_PREFIXES;
+    const replayingInputs = new WeakSet();
+    const replayingDrops = new WeakSet();
 
     // -----------------------------------------------------------------------
     // Utility functions
@@ -276,17 +278,17 @@
      * Returns a promise that resolves with the verdict.
      */
     async function scanFile(file) {
-        if (!isScannable(file)) {
-            return { verdict: 'ALLOW', reason: 'unscannable_file_type' };
-        }
-
-        // Block common AI-readable files immediately before any upload is allowed.
-        if (isBlockedAiReadableFile(file)) {
+        if (file.size > MAX_FILE_SIZE) {
             return {
                 verdict: 'BLOCK',
-                reason: 'blocked_ai_readable_file_type',
-                detections: 'AI-readable file category: ' + (file.type || file.name),
+                reason: 'file_too_large_to_scan',
+                message: `Upload blocked: ${file.name} is larger than the ` +
+                    `${MAX_FILE_SIZE / 1024 / 1024}MB scanning limit.`,
             };
+        }
+
+        if (!isScannable(file)) {
+            return { verdict: 'ALLOW', reason: 'unscannable_file_type' };
         }
 
         try {
@@ -327,18 +329,26 @@
         const input = event.target;
         if (!input.files || input.files.length === 0) return;
 
-        console.log(`[SentinelClip] File input detected: ${input.files.length} file(s)`);
+        if (replayingInputs.has(input)) {
+            replayingInputs.delete(input);
+            return;
+        }
 
-        for (const file of input.files) {
+        // Stop the site's upload handler while the native host scans the files.
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const files = Array.from(input.files);
+        input.value = '';
+
+        console.log(`[SentinelClip] File input detected: ${files.length} file(s)`);
+
+        for (const file of files) {
             const result = await scanFile(file);
             console.log(`[SentinelClip] Verdict for ${file.name}: ${result.verdict}`);
 
             if (result.verdict === 'BLOCK') {
-                // Clear the file input
-                event.preventDefault();
-                event.stopImmediatePropagation();
-                input.value = '';
                 showBlockOverlay(
+                    result.message ||
                     `File <strong>${file.name}</strong> contains sensitive data ` +
                     `(${result.detections || 'policy violation'}). ` +
                     `Upload has been blocked to prevent data leakage.`
@@ -351,6 +361,12 @@
                 );
             }
         }
+
+        const transfer = new DataTransfer();
+        files.forEach((file) => transfer.items.add(file));
+        replayingInputs.add(input);
+        input.files = transfer.files;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
     /**
@@ -361,16 +377,25 @@
             return;
         }
 
-        console.log(`[SentinelClip] Drop detected: ${event.dataTransfer.files.length} file(s)`);
+        if (replayingDrops.has(event.target)) {
+            replayingDrops.delete(event.target);
+            return;
+        }
 
-        for (const file of event.dataTransfer.files) {
+        // Pause the drop before the site's asynchronous upload handler runs.
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const files = Array.from(event.dataTransfer.files);
+
+        console.log(`[SentinelClip] Drop detected: ${files.length} file(s)`);
+
+        for (const file of files) {
             const result = await scanFile(file);
             console.log(`[SentinelClip] Verdict for ${file.name}: ${result.verdict}`);
 
             if (result.verdict === 'BLOCK') {
-                event.preventDefault();
-                event.stopImmediatePropagation();
                 showBlockOverlay(
+                    result.message ||
                     `File <strong>${file.name}</strong> contains sensitive data ` +
                     `(${result.detections || 'policy violation'}). ` +
                     `Upload has been blocked to prevent data leakage.`
@@ -383,6 +408,16 @@
                 );
             }
         }
+
+        const transfer = new DataTransfer();
+        files.forEach((file) => transfer.items.add(file));
+        replayingDrops.add(event.target);
+        const replay = new DragEvent('drop', {
+            bubbles: true,
+            cancelable: true,
+            dataTransfer: transfer,
+        });
+        event.target.dispatchEvent(replay);
     }
 
     // -----------------------------------------------------------------------
@@ -398,33 +433,6 @@
 
     // Listen for drag-and-drop
     document.addEventListener('drop', handleDrop, true);
-
-    // Observe DOM for dynamically added file inputs
-    const observer = new MutationObserver((mutations) => {
-        for (const mutation of mutations) {
-            for (const node of mutation.addedNodes) {
-                if (node.nodeType !== Node.ELEMENT_NODE) continue;
-
-                // Check the added node itself
-                if (node.tagName === 'INPUT' && node.type === 'file') {
-                    node.addEventListener('change', handleFileInput, true);
-                }
-
-                // Check children
-                const fileInputs = node.querySelectorAll?.('input[type="file"]');
-                if (fileInputs) {
-                    fileInputs.forEach((input) => {
-                        input.addEventListener('change', handleFileInput, true);
-                    });
-                }
-            }
-        }
-    });
-
-    observer.observe(document.body, {
-        childList: true,
-        subtree: true,
-    });
 
     console.log('[SentinelClip] Content script loaded for', getCurrentDomain());
 })();

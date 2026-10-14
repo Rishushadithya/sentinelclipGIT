@@ -7,6 +7,7 @@ Used by Streamlit dashboard pages — never touches SQLite directly.
 
 import requests
 import pandas as pd
+import os
 from typing import Optional
 
 
@@ -15,10 +16,12 @@ class SentinelClipAPI:
 
     def __init__(
         self,
-        base_url: str = "http://127.0.0.1:5000/api/v1",
+        base_url: Optional[str] = None,
         admin_token: Optional[str] = None,
     ):
-        self.base_url = base_url
+        self.base_url = base_url or os.getenv(
+            "SENTINELCLIP_API_BASE", "http://127.0.0.1:5000/api/v1"
+        )
         self.admin_token = admin_token
 
     def _headers(self, auth: bool = False) -> dict:
@@ -83,6 +86,16 @@ class SentinelClipAPI:
         )
         resp.raise_for_status()
         return resp.json()
+
+    def get_devices(self) -> list[dict]:
+        """Get enrolled devices for the administrator dashboard."""
+        resp = requests.get(
+            f"{self.base_url}/devices",
+            headers=self._headers(auth=True),
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return resp.json().get("devices", [])
 
     # -------------------------------------------------------------------
     # Events

@@ -25,12 +25,13 @@ sys.path.insert(0, PROJECT_ROOT)
 
 from detection.patterns import scan, rules_from_dicts
 from clipboard_engine.sanitizer import sanitize_payload
+from clipboard_engine.device_credentials import get_device_token
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-API_BASE = "http://127.0.0.1:5000/api/v1"
+API_BASE = os.getenv("SENTINELCLIP_API_BASE", "http://127.0.0.1:5000/api/v1")
 LOG_FILE = os.path.join(SCRIPT_DIR, "native_host.log")
 
 logging.basicConfig(
@@ -86,7 +87,15 @@ def get_policy_rules():
     global _cached_rules, _cached_rules_raw
 
     try:
-        resp = requests.get(f"{API_BASE}/policy", timeout=3)
+        device_token = get_device_token(API_BASE)
+        if not device_token:
+            logger.warning("No enrolled device credentials available")
+            return []
+        resp = requests.get(
+            f"{API_BASE}/policy",
+            headers={"Authorization": f"Bearer {device_token}"},
+            timeout=3,
+        )
         resp.raise_for_status()
         data = resp.json()
         rule_dicts = data.get("rules", [])
@@ -119,6 +128,10 @@ def scan_content(domain, filename, content):
             "reason": "no_rules",
             "message": "No policy rules configured.",
         }
+
+    device_token = get_device_token(API_BASE)
+    if not device_token:
+        logger.warning("No enrolled device credentials available for event logging")
 
     # Run sanitization (includes detection)
     sanitized, detections_log = sanitize_payload(content, rules)
@@ -159,17 +172,19 @@ def scan_content(domain, filename, content):
     # Report to Flask API
     try:
         action_taken = verdict
-        requests.post(
-            f"{API_BASE}/log",
-            json={
-                "source": "browser_upload",
-                "domain": domain,
-                "detections": rule_detections,
-                "action_taken": action_taken,
-            },
-            timeout=3,
-        )
-        logger.info(f"Event logged for {filename} on {domain}: {verdict}")
+        if device_token:
+            requests.post(
+                f"{API_BASE}/log",
+                json={
+                    "source": "browser_upload",
+                    "domain": domain,
+                    "detections": rule_detections,
+                    "action_taken": action_taken,
+                },
+                headers={"Authorization": f"Bearer {device_token}"},
+                timeout=3,
+            )
+            logger.info(f"Event logged for {filename} on {domain}: {verdict}")
     except requests.RequestException as e:
         logger.error(f"Failed to log event: {e}")
 

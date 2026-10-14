@@ -9,17 +9,28 @@ from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request, g
 from api.auth import require_auth
 from api.models import PolicyRuleModel
+from api.device_auth import require_device_auth
 
 policy_bp = Blueprint("policy", __name__)
 
 
 @policy_bp.route("/api/v1/policy", methods=["GET"])
+@require_device_auth
 def get_policies():
-    """Return all active (enabled) policy rules."""
+    """Return global rules plus rules scoped to the authenticated device/group."""
     db = g.db
     cursor = db.cursor()
     rows = cursor.execute(
-        "SELECT * FROM policies WHERE enabled = 1 ORDER BY id ASC"
+        """
+        SELECT * FROM policies
+        WHERE enabled = 1 AND (
+            scope_type = 'global'
+            OR (scope_type = 'device' AND scope_target = ?)
+            OR (scope_type = 'group' AND scope_target = ?)
+        )
+        ORDER BY id ASC
+        """,
+        (g.device["id"], g.device["group_name"]),
     ).fetchall()
 
     rules = []
@@ -33,6 +44,8 @@ def get_policies():
             "action": model.action,
             "replacement_value": model.replacement_value,
             "enabled": model.enabled,
+            "scope_type": model.scope_type,
+            "scope_target": model.scope_target,
         })
 
     return jsonify({"rules": rules})
@@ -88,6 +101,14 @@ def update_policy():
         return jsonify({"error": "severity must be 'LOW', 'MEDIUM', or 'HIGH'"}), 400
     if data["action"] not in ("WARN", "OBFUSCATE", "REDACT", "BLOCK"):
         return jsonify({"error": "action must be WARN, OBFUSCATE, REDACT, or BLOCK"}), 400
+    scope_type = data.get("scope_type", "global")
+    if scope_type not in ("global", "device", "group"):
+        return jsonify({"error": "scope_type must be global, device, or group"}), 400
+    scope_target = data.get("scope_target")
+    if scope_type == "global":
+        scope_target = None
+    elif not scope_target:
+        return jsonify({"error": "scope_target is required for device and group scopes"}), 400
 
     db = g.db
     cursor = db.cursor()
@@ -100,7 +121,7 @@ def update_policy():
             UPDATE policies SET
                 rule_name = ?, pattern = ?, pattern_type = ?,
                 severity = ?, action = ?, replacement_value = ?,
-                enabled = ?, updated_at = ?
+                enabled = ?, scope_type = ?, scope_target = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -111,6 +132,8 @@ def update_policy():
                 data["action"],
                 data.get("replacement_value"),
                 1 if data.get("enabled", True) else 0,
+                scope_type,
+                scope_target,
                 now,
                 data["id"],
             ),
@@ -131,8 +154,9 @@ def update_policy():
             """
             INSERT INTO policies (rule_name, pattern, pattern_type, severity,
                                   action, replacement_value, enabled,
+                                  scope_type, scope_target,
                                   created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data["rule_name"],
@@ -142,6 +166,8 @@ def update_policy():
                 data["action"],
                 data.get("replacement_value"),
                 1 if data.get("enabled", True) else 0,
+                scope_type,
+                scope_target,
                 now,
                 now,
             ),

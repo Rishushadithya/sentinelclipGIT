@@ -14,6 +14,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from api.app import create_app
+from api.auth import get_or_create_admin_token
 from api.audit import verify_chain
 from api.db import get_db
 from detection.patterns import scan, SEED_RULES
@@ -35,6 +36,24 @@ def client(app):
 
 
 @pytest.fixture
+def device_headers(client):
+    admin_headers = {"Authorization": f"Bearer {get_or_create_admin_token()}"}
+    code_response = client.post(
+        "/api/v1/devices/enrollment-codes", json={}, headers=admin_headers
+    )
+    enroll_response = client.post(
+        "/api/v1/devices/enroll",
+        json={
+            "code": code_response.get_json()["code"],
+            "hostname": "INTEGRATION-PC",
+            "os_user": "integration-user",
+        },
+    )
+    assert enroll_response.status_code == 201
+    return {"Authorization": f"Bearer {enroll_response.get_json()['device_token']}"}
+
+
+@pytest.fixture
 def db(app):
     conn = get_db(app.config.get("DB_PATH"))
     yield conn
@@ -44,10 +63,10 @@ def db(app):
 class TestFullPipeline:
     """Test the complete detection → sanitization → logging → verification flow."""
 
-    def test_clipboard_detection_and_logging(self, client):
+    def test_clipboard_detection_and_logging(self, client, device_headers):
         """Simulate clipboard engine detecting and logging an AWS key."""
         # Step 1: Fetch policy rules from API
-        resp = client.get("/api/v1/policy")
+        resp = client.get("/api/v1/policy", headers=device_headers)
         assert resp.status_code == 200
         rules_data = resp.get_json()["rules"]
         assert len(rules_data) > 0
@@ -71,7 +90,7 @@ class TestFullPipeline:
             "source": "clipboard",
             "detections": rule_entries,
             "action_taken": "BLOCK",
-        })
+        }, headers=device_headers)
         assert resp.status_code == 201
         log_data = resp.get_json()
         assert log_data["status"] == "logged"
@@ -88,7 +107,7 @@ class TestFullPipeline:
         verify = resp.get_json()
         assert verify["valid"] is True
 
-    def test_browser_upload_detection_flow(self, client):
+    def test_browser_upload_detection_flow(self, client, device_headers):
         """Simulate browser extension detecting sensitive content in a file upload."""
         # Load test fixture
         fixture_path = os.path.join(
@@ -99,7 +118,7 @@ class TestFullPipeline:
 
         # Detect
         from detection.patterns import rules_from_dicts
-        resp = client.get("/api/v1/policy")
+        resp = client.get("/api/v1/policy", headers=device_headers)
         rules = rules_from_dicts(resp.get_json()["rules"])
         sanitized, det_log = sanitize_payload(file_content, rules)
 
@@ -113,7 +132,7 @@ class TestFullPipeline:
             "domain": "chat.openai.com",
             "detections": rule_entries,
             "action_taken": "BLOCK",
-        })
+        }, headers=device_headers)
         assert resp.status_code == 201
 
         # Verify in events
@@ -122,7 +141,7 @@ class TestFullPipeline:
         assert len(events) > 0
         assert events[0]["domain"] == "chat.openai.com"
 
-    def test_multiple_events_chain_integrity(self, client):
+    def test_multiple_events_chain_integrity(self, client, device_headers):
         """Log multiple events and verify the full chain is intact."""
         test_cases = [
             {
@@ -157,7 +176,7 @@ class TestFullPipeline:
         ]
 
         for tc in test_cases:
-            resp = client.post("/api/v1/log", json=tc)
+            resp = client.post("/api/v1/log", json=tc, headers=device_headers)
             assert resp.status_code == 201
 
         # Verify chain
@@ -166,10 +185,9 @@ class TestFullPipeline:
         assert verify["valid"] is True
         assert verify["total_entries"] == 4
 
-    def test_policy_crud_flow(self, client):
+    def test_policy_crud_flow(self, client, device_headers):
         """Test the full policy create → read → update → delete lifecycle."""
         # Read admin token
-        from api.auth import get_or_create_admin_token
         token = get_or_create_admin_token()
         headers = {"Authorization": f"Bearer {token}"}
 
@@ -185,7 +203,7 @@ class TestFullPipeline:
         rule_id = resp.get_json()["id"]
 
         # Read — should be in active rules
-        resp = client.get("/api/v1/policy")
+        resp = client.get("/api/v1/policy", headers=device_headers)
         rules = resp.get_json()["rules"]
         names = [r["rule_name"] for r in rules]
         assert "GitHub Token" in names
@@ -206,30 +224,30 @@ class TestFullPipeline:
         assert resp.status_code == 200
 
         # Verify deleted
-        resp = client.get("/api/v1/policy")
+        resp = client.get("/api/v1/policy", headers=device_headers)
         rules = resp.get_json()["rules"]
         names = [r["rule_name"] for r in rules]
         assert "GitHub Token (Updated)" not in names
 
-    def test_stats_endpoint_accuracy(self, client):
+    def test_stats_endpoint_accuracy(self, client, device_headers):
         """Verify stats endpoint reflects logged events correctly."""
         # Log events of different types
         client.post("/api/v1/log", json={
             "source": "clipboard",
             "detections": [{"rule_name": "Test", "severity": "HIGH", "action": "BLOCK"}],
             "action_taken": "BLOCK",
-        })
+        }, headers=device_headers)
         client.post("/api/v1/log", json={
             "source": "clipboard",
             "detections": [{"rule_name": "Test", "severity": "LOW", "action": "WARN"}],
             "action_taken": "WARN",
-        })
+        }, headers=device_headers)
         client.post("/api/v1/log", json={
             "source": "browser_upload",
             "domain": "claude.ai",
             "detections": [{"rule_name": "Test", "severity": "MEDIUM", "action": "REDACT"}],
             "action_taken": "REDACT",
-        })
+        }, headers=device_headers)
 
         resp = client.get("/api/v1/stats")
         stats = resp.get_json()
@@ -243,7 +261,7 @@ class TestFullPipeline:
 class TestFixtureFileScan:
     """Test scanning fixture files as if they were uploaded."""
 
-    def test_scan_sample_secrets(self, client):
+    def test_scan_sample_secrets(self, client, device_headers):
         fixture_path = os.path.join(
             os.path.dirname(__file__), "fixtures", "sample_secrets.txt"
         )
@@ -251,7 +269,7 @@ class TestFixtureFileScan:
             content = f.read()
 
         from detection.patterns import rules_from_dicts
-        resp = client.get("/api/v1/policy")
+        resp = client.get("/api/v1/policy", headers=device_headers)
         rules = rules_from_dicts(resp.get_json()["rules"])
 
         sanitized, det_log = sanitize_payload(content, rules)
@@ -263,7 +281,7 @@ class TestFixtureFileScan:
         assert "Private IP Address" in rule_names
         assert "Email Address" in rule_names
 
-    def test_scan_csv_fixture(self, client):
+    def test_scan_csv_fixture(self, client, device_headers):
         fixture_path = os.path.join(
             os.path.dirname(__file__), "fixtures", "sample.csv"
         )
@@ -271,14 +289,14 @@ class TestFixtureFileScan:
             content = f.read()
 
         from detection.patterns import rules_from_dicts
-        resp = client.get("/api/v1/policy")
+        resp = client.get("/api/v1/policy", headers=device_headers)
         rules = rules_from_dicts(resp.get_json()["rules"])
 
         _, det_log = sanitize_payload(content, rules)
         rule_entries = [d for d in det_log if "rule_name" in d]
         assert len(rule_entries) > 0
 
-    def test_scan_json_fixture(self, client):
+    def test_scan_json_fixture(self, client, device_headers):
         fixture_path = os.path.join(
             os.path.dirname(__file__), "fixtures", "sample.json"
         )
@@ -286,7 +304,7 @@ class TestFixtureFileScan:
             content = f.read()
 
         from detection.patterns import rules_from_dicts
-        resp = client.get("/api/v1/policy")
+        resp = client.get("/api/v1/policy", headers=device_headers)
         rules = rules_from_dicts(resp.get_json()["rules"])
 
         _, det_log = sanitize_payload(content, rules)

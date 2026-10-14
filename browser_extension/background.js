@@ -57,21 +57,24 @@ async function handleScanRequest(payload, sendResponse) {
                 );
             }
         } else {
-            // No valid response — fail-open with warning
+            // Protected uploads must not bypass scanning when the host fails.
             console.warn('[SentinelClip] No valid response from native host');
-            sendResponse({ verdict: 'ALLOW', reason: 'no_native_response' });
+            sendResponse({
+                verdict: 'BLOCK',
+                reason: 'native_host_no_response',
+                message: 'SentinelClip could not verify this file upload.',
+            });
         }
     } catch (error) {
         console.error('[SentinelClip] Native messaging error:', error);
 
-        // Attempt direct API fallback
-        try {
-            const apiResponse = await scanViaAPI(payload);
-            sendResponse(apiResponse);
-        } catch (apiError) {
-            console.error('[SentinelClip] API fallback failed:', apiError);
-            sendResponse({ verdict: 'ALLOW', reason: 'all_channels_failed' });
-        }
+        // The direct browser fallback has no device credential. Do not bypass
+        // scanning when the native host is unavailable.
+        sendResponse({
+            verdict: 'BLOCK',
+            reason: 'native_host_unavailable',
+            message: 'SentinelClip native host is unavailable. Upload blocked.',
+        });
     }
 }
 
@@ -119,7 +122,7 @@ function sendToNativeHost(message) {
 }
 
 // ---------------------------------------------------------------------------
-// Direct API fallback (when native messaging is unavailable)
+// Legacy direct API fallback is intentionally not used without a device token.
 // ---------------------------------------------------------------------------
 
 /**

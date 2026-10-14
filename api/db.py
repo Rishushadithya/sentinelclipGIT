@@ -50,6 +50,8 @@ def init_db(conn: sqlite3.Connection) -> None:
             action TEXT NOT NULL,
             replacement_value TEXT,
             enabled INTEGER NOT NULL DEFAULT 1,
+            scope_type TEXT NOT NULL DEFAULT 'global',
+            scope_target TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
@@ -73,6 +75,32 @@ def init_db(conn: sqlite3.Connection) -> None:
     """)
 
     _ensure_audit_log_columns(conn)
+    _ensure_policy_scope_columns(conn)
+
+    # Device identity and one-time enrollment state for LAN agents.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS devices (
+            id TEXT PRIMARY KEY,
+            hostname TEXT NOT NULL,
+            os_user TEXT NOT NULL,
+            ip_address TEXT,
+            group_name TEXT,
+            enrolled_at TEXT NOT NULL,
+            last_seen TEXT,
+            status TEXT NOT NULL DEFAULT 'offline',
+            device_token_hash TEXT NOT NULL UNIQUE
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS enrollment_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code_hash TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            used_at TEXT
+        )
+    """)
 
     # Create allowed/blocked domains table
     cursor.execute("""
@@ -101,6 +129,20 @@ def _ensure_audit_log_columns(conn: sqlite3.Connection) -> None:
     if "pc_user_name" not in existing:
         conn.execute("ALTER TABLE audit_log ADD COLUMN pc_user_name TEXT")
         conn.commit()
+
+
+def _ensure_policy_scope_columns(conn: sqlite3.Connection) -> None:
+    """Add policy scoping columns to databases created before fleet support."""
+    columns = conn.execute("PRAGMA table_info(policies)").fetchall()
+    existing = {row[1] for row in columns}
+
+    if "scope_type" not in existing:
+        conn.execute(
+            "ALTER TABLE policies ADD COLUMN scope_type TEXT NOT NULL DEFAULT 'global'"
+        )
+    if "scope_target" not in existing:
+        conn.execute("ALTER TABLE policies ADD COLUMN scope_target TEXT")
+    conn.commit()
 
 
 def _migrate_default_policy_patterns(conn: sqlite3.Connection) -> None:
@@ -155,8 +197,9 @@ def _seed_default_policies(conn: sqlite3.Connection) -> None:
             """
             INSERT INTO policies (rule_name, pattern, pattern_type, severity,
                                   action, replacement_value, enabled,
+                                  scope_type, scope_target,
                                   created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'global', NULL, ?, ?)
             """,
             (
                 rule["rule_name"],

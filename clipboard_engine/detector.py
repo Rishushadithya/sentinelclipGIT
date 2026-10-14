@@ -7,12 +7,14 @@ from the Flask API and caches them with a TTL to avoid per-event HTTP calls.
 
 import time
 import logging
+import os
 import requests
 from detection.patterns import PolicyRule, Detection, scan, rules_from_dicts
+from clipboard_engine.device_credentials import get_device_token
 
 logger = logging.getLogger("sentinelclip.detector")
 
-API_BASE = "http://127.0.0.1:5000/api/v1"
+API_BASE = os.getenv("SENTINELCLIP_API_BASE", "http://127.0.0.1:5000/api/v1")
 CACHE_TTL_SECONDS = 30  # Refresh rules from API every 30 seconds
 
 
@@ -43,8 +45,14 @@ class PolicyCache:
     def _refresh(self):
         """Fetch rules from the Flask API."""
         try:
+            device_token = get_device_token(self.api_base)
+            if not device_token:
+                self._api_reachable = False
+                logger.warning("No enrolled device credentials available")
+                return
             resp = requests.get(
                 f"{self.api_base}/policy",
+                headers={"Authorization": f"Bearer {device_token}"},
                 timeout=2,
             )
             resp.raise_for_status()
