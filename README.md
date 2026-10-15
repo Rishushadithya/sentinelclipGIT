@@ -4,7 +4,7 @@
 
 SentinelClip is a lightweight, real-time Data Loss Prevention (DLP) engine designed to monitor, sanitize, and audit sensitive data across desktop clipboard operations and web browser interactions.
 
----
+----
 
 ## 📄 Submission Documentation
 
